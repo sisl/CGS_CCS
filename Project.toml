@@ -1,0 +1,8 @@
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+GeoStats = "dcc97b0b-8ce5-5539-9008-bb190f959ef6"
+Infiltrator = "5903a43b-9cc3-4c30-8d17-598619ec4e9b"
+POMDPs = "a93abf59-7444-517b-a68a-c42f96afdd7d"
