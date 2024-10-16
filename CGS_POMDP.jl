@@ -93,7 +93,8 @@ struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
     function CGSPOMDP()
         earth = initialize_earth()
         lines = [SeismicLine(rand(0.0:100.0), rand(0.0:100.0), rand(0.0:100.0), rand(0.0:100.0))
-                    for _ in 0:NUM_LINES]
+                    for _ in 0:NUM_LINES] # TODO: Make lines more realistic (longer)
+        
         return new(CGS_State(earth, lines))
     end
 end
