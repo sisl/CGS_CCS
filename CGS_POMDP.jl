@@ -6,12 +6,7 @@ using DataFrames
 import GLMakie as Mke
 using Infiltrator
 
-# CONSTANTS
-const NUM_LAYERS = 5
-const NUM_LINES = 10
-const RANGE = 15.
-const SILL = 3.0
-const NUGGET = .1
+include("config.jl")
 
 struct GeoFeatures
     range::Number
@@ -62,10 +57,12 @@ and a vector of seismic lines
 struct CGS_State
     earth::Vector{LayerFeatures}
     seismic_lines::Vector{SeismicLine}
+    well_logs::Vector{Point}
 end
 
-struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
+mutable struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
     state::CGS_State
+    collected_locs::Vector{Geometry}
     function initialize_earth()::Vector{LayerFeatures}
         randlayers::Vector{LayerFeatures} = []
         prev_mean = 0.
@@ -93,28 +90,43 @@ struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
     function CGSPOMDP()
         earth = initialize_earth()
         lines = [SeismicLine(rand(0.0:100.0), rand(0.0:100.0), rand(0.0:100.0), rand(0.0:100.0))
-                    for _ in 0:NUM_LINES] # TODO: Make lines more realistic (longer)
-        
-        return new(CGS_State(earth, lines))
+                    for _ in 1:NUM_LINES] # TODO: Make lines more realistic (longer)
+        wells = [Point(rand(0.0:100.0), rand(0.0:100.0)) for _ in 1:NUM_WELLS]
+        return new(CGS_State(earth, lines, wells), [])
     end
 end
 
-pomdp = CGSPOMDP()
+function POMDPs.states(pomdp::CGSPOMDP)
+    return [pomdp.state]
+end
 
-# function POMDPs.states(pomdp::CGSPOMDP)
-#     return [pomdp.state]
+function POMDPs.transition(pomdp::CGSPOMDP, state, action)
+    return SparseCat([state], [1.0])
+end
+
+function buy_well_data(pomdp::CGSPOMDP, ind::Int)
+    well = pomdp.state.well_logs[ind]
+    push!(pomdp.collected_locs, well)
+end
+
+function observe(pomdp::CGSPOMDP, point::Point, layer::Int, col_name::String)
+    gtlayer = pomdp.state.earth[layer].gt
+    data_at_all_wells = gtlayer[Multi([pomdp.collected_locs...]), :]
+
+    γ = SphericalVariogram(range=RANGE, sill=SILL, nugget=NUGGET) # Each feature can have a different nugget in the future.
+    okrig = GeoStatsModels.OrdinaryKriging(γ)
+    fitkrig = GeoStatsModels.fit(okrig, data_at_all_wells)
+    column = Symbol("$col_name")
+    return GeoStatsModels.predictprob(fitkrig, column, point).σ
+end
+
+# function POMDPs.actions(pomdp::TigerPOMDP)
+#     return [] # idk well logs and seismic lines here.
 # end
-
-# function POMDPs.transition(pomdp::CGSPOMDP, state, action) # actually have a state transition???
-#     return SparseCat([state], [1.0])
-# end
-
 
 # ----------------- Taken from tiger -----------------
 # # Define the actions: open left, open right, or listen
-# function POMDPs.actions(pomdp::TigerPOMDP)
-#     return [:open_left, :open_right, :listen]
-# end
+
 
 # # Define the observations: hear tiger on the left, hear tiger on the right
 # function POMDPs.observations(pomdp::TigerPOMDP)
