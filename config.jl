@@ -7,3 +7,10 @@ const NUM_WELLS = 15
 const RANGE = 15.
 const SILL = 3.0
 const NUGGET = 0.1
+
+# Action costs
+const WELL_COST = 3
+const SEISMIC_LINE_COST = 4
+
+const SUITABILITY_THRESHOLD = 3.5
+const SUITABILITY_BIAS = 0.7

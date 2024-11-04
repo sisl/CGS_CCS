@@ -62,6 +62,7 @@ mutable struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
     state::CGS_State
     collected_locs::Vector{Geometry}
     feature_names::Vector{Symbol}
+    map_uncertainty::Float64 # Some measure of uncertainty over the whole map
     function initialize_earth()::Vector{LayerFeatures}
         randlayers::Vector{LayerFeatures} = []
         prev_mean = 0.
@@ -92,7 +93,8 @@ mutable struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
         lines = [Segment(Point(rand(0.0:100.0), rand(0.0:100.0)), Point(rand(0.0:100.0), rand(0.0:100.0)))
                     for _ in 1:NUM_LINES] # TODO: Make lines more realistic (longer)
         wells = [Point(rand(0.0:100.0), rand(0.0:100.0)) for _ in 1:NUM_WELLS]
-        return new(CGS_State(earth, lines, wells), [], feature_names)
+
+        return new(CGS_State(earth, lines, wells), [], feature_names, -1.0)
     end
 end
 
@@ -119,7 +121,6 @@ function observe(pomdp::CGSPOMDP, point::Point, layer::Int, column::Symbol)
     return GeoStatsModels.predictprob(fitkrig, column, point)
 end
 
-
 function POMDPs.actions(pomdp::CGSPOMDP)::Vector{NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}}}
     well_actions = [(id=:well_action, geometry=x) for x in pomdp.state.well_logs]
     seismic_actions = [(id=:seismic_action, geometry=x) for x in pomdp.state.seismic_lines]
@@ -131,29 +132,30 @@ function observe(pomdp::CGSPOMDP, geom::Point)
     return vcat([[observe(pomdp, geom, layer, feature) for feature in pomdp.feature_names] for layer in 1:NUM_LAYERS]...)
 end
 
-function get_cond_distr(layer::Int, column::Symbol, pts)
-    gtlayer = pomdp.state.earth[layer].gt
-    data_at_all_wells = gtlayer[Multi([pomdp.collected_locs...]), :]
-
-    proc = GaussianProcess(
-            SphericalVariogram(range=RANGE, sill=SILL, nugget=NUGGET), 
-            mean(gtlayer[:, column])
-            ) # TODO: This is a bit of a hack, we assume we have an okay estimate of mean for a layer
+function get_cond_distr(pomdp::CGSPOMDP, pts)::Vector{MvNormal}
+    cond_distributions::Vector{MvNormal} = [] # A conditional distribution for each feature for each layer
+    for layer in 1:NUM_LAYERS
+        gtlayer = pomdp.state.earth[layer].gt
+        data_at_all_wells = gtlayer[Multi([pomdp.collected_locs...]), :]
+        grid = CartesianGrid(100, 100)
+        for column in pomdp.feature_names
+            proc = GaussianProcess(
+                    SphericalVariogram(range=RANGE, sill=SILL, nugget=NUGGET), 
+                    mean(gtlayer[:, column])
+                    ) # TODO: This is a bit of a hack, we assume we have an okay estimate of mean for a layer
             
-    grid = CartesianGrid(100, 100)
+            tgt_geom = Multi([pts...])
+            tgt_realizations = [rand(proc, grid, data_at_all_wells)[tgt_geom, :] for _ in 1:(3 * length(pts))];
 
-    tgt_geom = Multi([pts...])
-    tgt_realizations = [rand(proc, grid, data_at_all_wells)[tgt_geom, :] for _ in 1:100];
-
-    Z = [tgt_rlz[:, column] for tgt_rlz in tgt_realizations]
-    Z_matrix = hcat(@view Z...)
-    mean_vector = mean(Z_matrix, dims=2) |> vec
-    # println(size(Z_matrix))
-    cov_matrix = cov(Z_matrix') + 1e-5 * I
-    # println(eigen(cov_matrix).values)
-    # @assert all(eigen(cov_matrix).values .> 0)
-    feat_distr = MvNormal(mean_vector, cov_matrix)
-    return feat_distr
+            Z = [tgt_rlz[:, column] for tgt_rlz in tgt_realizations]
+            Z_matrix = hcat(Z...)
+            mean_vector = mean(Z_matrix, dims=2) |> vec
+            cov_matrix = cov(Z_matrix') + 1e-5 * I
+            feat_distr = MvNormal(mean_vector, cov_matrix)
+            push!(cond_distributions, feat_distr)
+        end
+    end
+    return cond_distributions
 end
 
 function Base.:*(p::Point, scalar::Number)
@@ -168,7 +170,8 @@ function observe(pomdp::CGSPOMDP, geom::Segment)
     p1 = geom.vertices[1]
     p2 = geom.vertices[2]
     points = [p1 * (1 - t) + p2 * t for t in range(0, stop=1, length=20)]
-    return vcat([[get_cond_distr(layer, feature, points) for feature in pomdp.feature_names] for layer in 1:NUM_LAYERS]...)
+    # TODO: Distribute this work
+    return get_cond_distr(pomdp, points)
 end
 
 function POMDPs.observation(pomdp::CGSPOMDP, action, state) # returns distribution
@@ -184,37 +187,117 @@ function POMDPs.observation(pomdp::CGSPOMDP, action, state) # returns distributi
     return # product distribution of all things (up to 150 things, is this an issue)
 end
 
-# ----------------- Taken from tiger -----------------
-# # Define the actions: open left, open right, or listen
+function reward_action_cost(action::NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}})
+    if action.id == :well_action
+        return WELL_COST
+    elseif action.id == :seismic_action
+        return SEISMIC_LINE_COST
+    elseif action.id == :observe_action
+        return 0
+    else
+        return 0
+    end
+end
+
+function score_component(feature::Symbol, value)
+    if feature == :permeability
+        if value < 10
+            return 0
+        elseif value < 20
+            return 1
+        elseif value < 50
+            return 2
+        elseif value < 100
+            return 4
+        elseif value < 500
+            return 5
+        else
+            return 3
+        end
+    elseif feature == :topSealThickness
+        value = (value - 25) ÷ 10
+        value = clamp(value, 0, 5)
+        return value
+    elseif feature == :z
+        if value < 800
+            return 0
+        elseif value < 1000
+            return 1
+        elseif value < 1500
+            return 3
+        elseif value < 2000
+            return 5
+        elseif value < 3000
+            return 4
+        else
+            return 2
+        end
+    end
+end
+
+function calculate_map_suitability(pomdp::CGSPOMDP)
+    total_suitability_score::Float64 = 0.0
+    for layer in 1:NUM_LAYERS
+        gtlayer = pomdp.state.earth[layer].gt
+        data_at_all_wells = gtlayer[Multi([pomdp.collected_locs...]), :]
+        γ = SphericalVariogram(range=RANGE, sill=SILL, nugget=NUGGET) # Each feature can have a different nugget in the future.
+        
+        okrig = GeoStatsModels.OrdinaryKriging(γ)
+        fitkrig = GeoStatsModels.fit(okrig, data_at_all_wells)
+        
+        for pt in domain(pomdp.state.earth[1].gt)
+            # If I am a point with high confidence and a high/low suitability score, I update map_suitability
+            high_confidence::Bool = true
+            suitability_score = 0.0
+            for column in pomdp.feature_names
+                feat_distr = GeoStatsModels.predictprob(fitkrig, column, pt)
+                if feat_distr.σ > 1
+                    high_confidence = false
+                    break
+                end
+                suitability_score += score_component(column, feat_distr.μ)
+            end
+            if high_confidence
+                total_suitability_score += (suitability_score > SUITABILITY_THRESHOLD) ? 1 : SUITABILITY_BIAS
+            end
+        end
+    end
+    return total_suitability_score
+end
+
+function calculate_map_uncertainty(pomdp::CGSPOMDP)::Float64
+    layer_col_unc::Float64 = 0.0
+    for column in pomdp.feature_names
+        for layer in 1:NUM_LAYERS
+            gtlayer = pomdp.state.earth[layer].gt
+            data_at_all_wells = gtlayer[Multi([pomdp.collected_locs...]), :]
+
+            γ = SphericalVariogram(range=RANGE, sill=SILL, nugget=NUGGET) # Each feature can have a different nugget in the future.
+            okrig = GeoStatsModels.OrdinaryKriging(γ)
+            fitkrig = GeoStatsModels.fit(okrig, data_at_all_wells)
+
+            for pt in domain(pomdp.state.earth[1].gt)
+                layer_col_unc += GeoStatsModels.predictprob(fitkrig, column, pt).σ
+            end
+        end
+    end
+    pomdp.map_uncertainty = layer_col_unc
+    return layer_col_unc
+end
+
+function reward_information_gain(pomdp::CGSPOMDP)
+    r::Float64 = pomdp.map_uncertainty
+    if r < 0
+        calculate_map_uncertainty(pomdp)
+        return 1.0 # If its the first action, we don't know how much better we've done
+    end
+    r -= calculate_map_uncertainty(pomdp)
+    return r
+end
 
 
-# # Define the observations: hear tiger on the left, hear tiger on the right
-# function POMDPs.observations(pomdp::TigerPOMDP)
-#     return [:hear_left, :hear_right]
-# end
+function POMDPs.reward(pomdp::CGSPOMDP, state, action)
+    return reward_action_cost(action) + reward_information_gain(pomdp) + calculate_map_suitability(pomdp)
+end
 
-
-
-
-# # Reward model
-# function POMDPs.reward(pomdp::TigerPOMDP, state, action)
-#     if action == :open_left
-#         return state ? -100.0 : 10.0  # Penalty for opening the door with the tiger, reward for the empty one
-#     elseif action == :open_right
-#         return state ? 10.0 : -100.0
-#     else
-#         return -1.0  # Cost of listening
-#     end
-# end
-
-# # Discount factor
-# POMDPs.discount(pomdp::TigerPOMDP) = pomdp.discount
-
-# # Create the POMDP object
-# pomdp = TigerPOMDP(0.95)
-
-# # Solve the POMDP using a value iteration solver
-# solver = ValueIterationSolver()
-# policy = solve(solver, pomdp)
-
-# println("Optimal policy computed!")
+POMDPs.discount(pomdp::CGSPOMDP) = 0.95 
