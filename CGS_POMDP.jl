@@ -6,6 +6,8 @@ using DataFrames
 using LinearAlgebra
 import GLMakie as Mke
 using Infiltrator
+using Base.Threads
+using AbstractGPs
 
 include("config.jl")
 
@@ -26,7 +28,6 @@ use viewer(gt) to visualize a Layer
 struct LayerFeatures
     gt::GeoTable
     df::DataFrame
-    beliefs::Dict
     function LayerFeatures(feats::Vector{GeoFeatures})
         gps = Dict()
         grid = CartesianGrid(100, 100)
@@ -63,6 +64,7 @@ mutable struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
     collected_locs::Vector{Geometry}
     feature_names::Vector{Symbol}
     map_uncertainty::Float64 # Some measure of uncertainty over the whole map
+    belief::Vector{Vector{GP}} # Every layer/feature combo is an independent GP
     function initialize_earth()::Vector{LayerFeatures}
         randlayers::Vector{LayerFeatures} = []
         prev_mean = 0.
@@ -93,8 +95,8 @@ mutable struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
         lines = [Segment(Point(rand(0.0:100.0), rand(0.0:100.0)), Point(rand(0.0:100.0), rand(0.0:100.0)))
                     for _ in 1:NUM_LINES] # TODO: Make lines more realistic (longer)
         wells = [Point(rand(0.0:100.0), rand(0.0:100.0)) for _ in 1:NUM_WELLS]
-
-        return new(CGS_State(earth, lines, wells), [], feature_names, -1.0)
+        gps = [[GP(Matern32Kernel()) for _ in feature_names] for __ in 1:NUM_LAYERS]
+        return new(CGS_State(earth, lines, wells), [], feature_names, -1.0, gps)
     end
 end
 
@@ -133,27 +135,35 @@ function observe(pomdp::CGSPOMDP, geom::Point)
 end
 
 function get_cond_distr(pomdp::CGSPOMDP, pts)::Vector{MvNormal}
-    cond_distributions::Vector{MvNormal} = [] # A conditional distribution for each feature for each layer
-    for layer in 1:NUM_LAYERS
+    cond_distributions::Vector{MvNormal} = []
+    grid = CartesianGrid(100, 100)
+
+    myl = ReentrantLock()
+    @threads for layer in 1:NUM_LAYERS
+        local cond_distributions_layer = []
+        
         gtlayer = pomdp.state.earth[layer].gt
         data_at_all_wells = gtlayer[Multi([pomdp.collected_locs...]), :]
-        grid = CartesianGrid(100, 100)
+        
         for column in pomdp.feature_names
             proc = GaussianProcess(
-                    SphericalVariogram(range=RANGE, sill=SILL, nugget=NUGGET), 
-                    mean(gtlayer[:, column])
-                    ) # TODO: This is a bit of a hack, we assume we have an okay estimate of mean for a layer
+                SphericalVariogram(range=RANGE, sill=SILL, nugget=NUGGET),
+                mean(gtlayer[:, column])
+            ) # Switch to Abstract GPs.jl
             
             tgt_geom = Multi([pts...])
-            tgt_realizations = [rand(proc, grid, data_at_all_wells)[tgt_geom, :] for _ in 1:(3 * length(pts))];
-
+            tgt_realizations = [rand(proc, grid, data_at_all_wells)[tgt_geom, :] for _ in 1:(3 * length(pts))]
+            
             Z = [tgt_rlz[:, column] for tgt_rlz in tgt_realizations]
             Z_matrix = hcat(Z...)
             mean_vector = mean(Z_matrix, dims=2) |> vec
             cov_matrix = cov(Z_matrix') + 1e-5 * I
+            
             feat_distr = MvNormal(mean_vector, cov_matrix)
-            push!(cond_distributions, feat_distr)
+            push!(cond_distributions_layer, feat_distr)
         end
+
+        @lock myl append!(cond_distributions, cond_distributions_layer)
     end
     return cond_distributions
 end
@@ -235,6 +245,39 @@ function score_component(feature::Symbol, value)
     end
 end
 
+function calculate_map_uncertainty_suitability(pomdp::CGSPOMDP)
+    total_suitability_score::Float64 = 0.0
+    layer_col_unc::Float64 = 0.0
+    
+    γ = SphericalVariogram(range=RANGE, sill=SILL, nugget=NUGGET) # Each feature can have a different nugget in the future.
+    okrig = GeoStatsModels.OrdinaryKriging(γ)
+
+    for layer in 1:NUM_LAYERS
+        gtlayer = pomdp.state.earth[layer].gt
+        data_at_all_wells = gtlayer[Multi([pomdp.collected_locs...]), :]
+        fitkrig = GeoStatsModels.fit(okrig, data_at_all_wells)
+
+        for pt in domain(pomdp.state.earth[1].gt)
+            # If I am a point with high confidence and a high/low suitability score, I update map_suitability
+            high_confidence::Bool = true # Do more math here
+            suitability_score = 0.0
+            for column in pomdp.feature_names
+                layer_col_unc += GeoStatsModels.predictprob(fitkrig, column, pt).σ
+                feat_distr = GeoStatsModels.predictprob(fitkrig, column, pt)
+                if feat_distr.σ > HIGH_CONFIDENCE_THRESHOLD # TODO Make hyperparameter
+                    high_confidence = false
+                    break
+                end
+                suitability_score += score_component(column, feat_distr.μ)
+            end
+            if high_confidence
+                total_suitability_score += (suitability_score > SUITABILITY_THRESHOLD) ? 1 : SUITABILITY_BIAS
+            end
+        end
+    end
+    return total_suitability_score
+end
+
 function calculate_map_suitability(pomdp::CGSPOMDP)
     total_suitability_score::Float64 = 0.0
     for layer in 1:NUM_LAYERS
@@ -247,11 +290,11 @@ function calculate_map_suitability(pomdp::CGSPOMDP)
         
         for pt in domain(pomdp.state.earth[1].gt)
             # If I am a point with high confidence and a high/low suitability score, I update map_suitability
-            high_confidence::Bool = true
+            high_confidence::Bool = true # Do more math here (be more rigorous via sampling)
             suitability_score = 0.0
             for column in pomdp.feature_names
                 feat_distr = GeoStatsModels.predictprob(fitkrig, column, pt)
-                if feat_distr.σ > 1
+                if feat_distr.σ > 1 # TODO Make hyperparameter
                     high_confidence = false
                     break
                 end
@@ -285,6 +328,17 @@ function calculate_map_uncertainty(pomdp::CGSPOMDP)::Float64
     return layer_col_unc
 end
 
+function reward_information_suitability(pomdp::CGSPOMDP)
+    r_unc::Float64 = pomdp.map_uncertainty
+    r_suit::Float64 = calculate_map_uncertainty_suitability(pomdp)
+    if r_unc < 0
+        r_unc = 1.0
+    else
+        r_unc -= pomdp.map_uncertainty
+    end
+    return r_unc + r_suit
+end
+
 function reward_information_gain(pomdp::CGSPOMDP)
     r::Float64 = pomdp.map_uncertainty
     if r < 0
@@ -297,7 +351,7 @@ end
 
 
 function POMDPs.reward(pomdp::CGSPOMDP, state, action)
-    return reward_action_cost(action) + reward_information_gain(pomdp) + calculate_map_suitability(pomdp)
+    return reward_action_cost(action) + reward_information_suitability(pomdp)
 end
 
 POMDPs.discount(pomdp::CGSPOMDP) = 0.95 
