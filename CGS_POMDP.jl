@@ -8,6 +8,7 @@ import GLMakie as Mke
 using Infiltrator
 using Base.Threads
 using AbstractGPs
+using Unitful
 
 include("config.jl")
 
@@ -29,12 +30,10 @@ struct LayerFeatures
     gt::GeoTable
     df::DataFrame
     function LayerFeatures(feats::Vector{GeoFeatures})
-        gps = Dict()
         grid = CartesianGrid(100, 100)
         dfs::Vector{DataFrame} = []
         for feat in feats
             proc = GaussianProcess(SphericalVariogram(range=feat.range, sill=feat.sill, nugget=feat.nugget), feat.mean)
-            gps[feat.name] = proc
             simul = rand(proc, grid, [feat.name => Float64], 1)[1]
             feat_dataframe = DataFrame(simul)
             select!(feat_dataframe, Not(:geometry))
@@ -43,7 +42,7 @@ struct LayerFeatures
         all_feature_df = hcat(dfs...)
         all_feature_gt = georef(all_feature_df, grid)
         
-        return new(all_feature_gt, all_feature_df, gps)
+        return new(all_feature_gt, all_feature_df)
     end
 end
 
@@ -64,7 +63,7 @@ mutable struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
     collected_locs::Vector{Geometry}
     feature_names::Vector{Symbol}
     map_uncertainty::Float64 # Some measure of uncertainty over the whole map
-    belief::Vector{Vector{GP}} # Every layer/feature combo is an independent GP
+    belief::Vector{Dict{Symbol, Any}} # Every layer/feature combo is an independent GP
     function initialize_earth()::Vector{LayerFeatures}
         randlayers::Vector{LayerFeatures} = []
         prev_mean = 0.
@@ -95,7 +94,11 @@ mutable struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
         lines = [Segment(Point(rand(0.0:100.0), rand(0.0:100.0)), Point(rand(0.0:100.0), rand(0.0:100.0)))
                     for _ in 1:NUM_LINES] # TODO: Make lines more realistic (longer)
         wells = [Point(rand(0.0:100.0), rand(0.0:100.0)) for _ in 1:NUM_WELLS]
-        gps = [[GP(Matern32Kernel()) for _ in feature_names] for __ in 1:NUM_LAYERS]
+        gps = [Dict(
+                    :z => GP(Matern32Kernel()), 
+                    :permeability => GP(Matern32Kernel()),
+                    :topSealThickness => GP(Matern32Kernel())
+                ) for _ in 1:NUM_LAYERS]
         return new(CGS_State(earth, lines, wells), [], feature_names, -1.0, gps)
     end
 end
@@ -114,13 +117,13 @@ function buy_well_data(pomdp::CGSPOMDP, ind::Int)
 end
 
 function observe(pomdp::CGSPOMDP, point::Point, layer::Int, column::Symbol)
-    gtlayer = pomdp.state.earth[layer].gt
-    data_at_all_wells = gtlayer[Multi([pomdp.collected_locs...]), :]
+    f = pomdp.belief[layer][column]
+    x = pcu(point)
+    y = pomdp.state.earth[layer].gt[point, column]
+    p_fx = posterior(f(x, 0.1), y)
+    pomdp.belief[layer][column] = p_fx
 
-    γ = SphericalVariogram(range=RANGE, sill=SILL, nugget=NUGGET) # Each feature can have a different nugget in the future.
-    okrig = GeoStatsModels.OrdinaryKriging(γ)
-    fitkrig = GeoStatsModels.fit(okrig, data_at_all_wells)
-    return GeoStatsModels.predictprob(fitkrig, column, point)
+    return p_fx(x, 0.1)
 end
 
 function POMDPs.actions(pomdp::CGSPOMDP)::Vector{NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}}}
@@ -355,3 +358,19 @@ function POMDPs.reward(pomdp::CGSPOMDP, state, action)
 end
 
 POMDPs.discount(pomdp::CGSPOMDP) = 0.95 
+
+# Utility fns
+"""
+Point Conversion Utility (pcu)
+Take a 2D Point from GeoStats.jl and convert it into a 
+1 element vector of vector of 2 coordinates that is easily fed into a GP from
+AbstractGPs.jl
+E.g.
+>>> point = Point(1.0, 3.0)
+>>> pcu(point)
+1-element Vector{Vector{Quantity{Float64, 𝐋, Unitful.FreeUnits{(m,), 𝐋, nothing}}}}:
+[1.0, 3.0] # Need to strip units as well for AbstractGPs
+"""
+function pcu(p::Point)
+    return [[ustrip(p.coords.x), ustrip(p.coords.y)]]
+end
