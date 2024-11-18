@@ -15,6 +15,7 @@ GeoStats = "dcc97b0b-8ce5-5539-9008-bb190f959ef6"
 GeoStatsFunctions = "6771c435-bc22-4842-b0c3-41852a255103"
 GeoStatsModels = "ad987403-13c5-47b5-afee-0a48f6ac4f12"
 Infiltrator = "5903a43b-9cc3-4c30-8d17-598619ec4e9b"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 POMCPOW = "4c53ee00-974c-466f-8fa5-8dd73959bbab"
 POMDPModels = "355abbd5-f08e-5560-ac9e-8b5f2592a0ca"
 POMDPSimulators = "e0d0a172-29c6-5d4e-96d0-f262df5d01fd"
@@ -26,4 +27,5 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
+LinearAlgebra = "1.11.0"
 Random = "1.11.0"

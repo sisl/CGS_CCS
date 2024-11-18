@@ -141,6 +141,7 @@ function POMDPs.actionindex(pomdp, action::@NamedTuple{id::Symbol, geometry::Geo
     return pomdp.action_index[action]
 end
 
+using LinearAlgebra # TODO: Get rid of this
 function observe(pomdp::CCSPOMDP, point::Point, layer::Int, column::Symbol, action_id::Symbol)
     f = pomdp.belief[layer][column]
     x = pcu(point)
@@ -169,11 +170,25 @@ function observe(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol, act
     x = pcu(points)
     y = [pomdp.state.earth[layer].gt[pt, column][1] for pt in points]
     unc = ACTION_UNCERTAINTY[(action_id, column)]
-    p_fx = posterior(f(x, unc), y)
-    pomdp.belief[layer][column] = p_fx
-
-    mean_cond = mean(p_fx(x))
-    cov_cond = cov(p_fx(x))
+    if unc < 0 # Feature belief not changed by action
+        mean_cond = mean(f(x))
+        cov_cond = cov(f(x))
+    else
+        p_fx = posterior(f(x, unc), y)
+        pomdp.belief[layer][column] = p_fx
+        
+        mean_cond = mean(p_fx(x))
+        cov_cond = cov(p_fx(x))
+        # cov_cond = (cov_cond + cov_cond') / 2
+        # cov_cond += 1e-4 * I
+        # println("Original Cov Matrix for feature $column")
+        # println(cov(f(x)))
+        # println("Updated Cov Matrix, variance $(unc) for feature $column")
+        # println(cov_cond)
+        # if !isposdef(cov_cond)
+        #     error("Covariance matrix is not positive definite!")
+        # end
+    end
     joint_conditional_dist = MvNormal(mean_cond, cov_cond)
     return joint_conditional_dist
 end

@@ -4,7 +4,7 @@ const NUM_LINES = 7
 const NUM_WELLS = 15
 const GRID_SIZE = 100
 
-const SEISMIC_N_POINTS = 25
+const SEISMIC_N_POINTS = 5
 
 # Belief Initialization
 PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
@@ -30,13 +30,12 @@ const λ_2 = 1e-4
 
 # Action Uncertainty
 a_u = Dict(
-    # verify variance vs std
-    (:well_action, :z) => 0.1, # within 3 m
-    (:well_action, :permeability) => 0.1,
-    (:well_action, :topSealThickness) => 0.1,
+    (:well_action, :z) => 9, # within 3 m
+    (:well_action, :permeability) => 100, # std 10 miniDarcy
+    (:well_action, :topSealThickness) => 4, # std 2 m
 
-    (:seismic_action, :z) => 0.5,
-    (:seismic_action, :topSealThickness) => 0.5,
+    (:seismic_action, :z) => 100, # within 10 m
+    (:seismic_action, :topSealThickness) => 400, # within 20 m
 )
 
 ACTION_UNCERTAINTY = DefaultDict(-1., a_u)
