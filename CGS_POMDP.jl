@@ -2,17 +2,19 @@
 using POMDPs
 using Distributions
 using GeoStats
+using Random
 using DataFrames
 using LinearAlgebra
 import GLMakie as Mke
 using Infiltrator
-using Base.Threads
 using AbstractGPs
 using Unitful
 using Plots
 using DataStructures
 
 include("config.jl")
+# include("spcat.jl")
+include("det.jl")
 
 struct GeoFeatures
     range::Number
@@ -36,7 +38,7 @@ struct LayerFeatures
         dfs::Vector{DataFrame} = []
         for feat in feats
             proc = GaussianProcess(SphericalVariogram(range=feat.range, sill=feat.sill, nugget=feat.nugget), feat.mean)
-            simul = rand(proc, grid, [feat.name => Float64], 1)[1]
+            simul = GeoStats.rand(proc, grid, [feat.name => Float64], 1)[1]
             feat_dataframe = DataFrame(simul)
             select!(feat_dataframe, Not(:geometry))
             push!(dfs, feat_dataframe)
@@ -60,11 +62,12 @@ struct CGS_State
     well_logs::Vector{Point}
 end
 
-mutable struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
+mutable struct CGSPOMDP <: POMDP{CGS_State, @NamedTuple{id::Symbol, geometry::Geometry}, Any}
     state::CGS_State
     feature_names::Vector{Symbol}
     map_uncertainty::Float64 # Some measure of uncertainty over the whole map
     belief::Vector{Dict{Symbol, Any}} # Every layer/feature combo is an independent GP
+    action_index::Dict
     function initialize_earth()::Vector{LayerFeatures}
         randlayers::Vector{LayerFeatures} = []
         prev_mean = 0.
@@ -74,16 +77,16 @@ mutable struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
             if layer == 1
                 push!(layer_params, GeoFeatures(RANGE, SILL, NUGGET, :z, 0.))
             else
-                prev_mean += rand(300:800)
+                prev_mean += Base.rand(300:800)
                 push!(layer_params, GeoFeatures(RANGE, SILL, NUGGET, :z, prev_mean))
             end
             
             # For permeability
             λ = 100
-            push!(layer_params, GeoFeatures(RANGE, SILL, NUGGET, :permeability, rand(Exponential(λ))))
+            push!(layer_params, GeoFeatures(RANGE, SILL, NUGGET, :permeability, Base.rand(Exponential(λ))))
             
             # For top seal thickness
-            push!(layer_params, GeoFeatures(RANGE, SILL, NUGGET, :topSealThickness, rand(10:80)))
+            push!(layer_params, GeoFeatures(RANGE, SILL, NUGGET, :topSealThickness, Base.rand(10:80)))
 
             push!(randlayers, LayerFeatures(layer_params))
         end
@@ -108,24 +111,28 @@ mutable struct CGSPOMDP <: POMDP{CGS_State, Symbol, Symbol}
     function CGSPOMDP()
         earth = initialize_earth()
         feature_names = [:z, :permeability, :topSealThickness]
-        lines = [Segment(Point(rand(0.0:float(GRID_SIZE)), 
-                               rand(0.0:float(GRID_SIZE))), 
-                         Point(rand(0.0:float(GRID_SIZE)),
-                               rand(0.0:float(GRID_SIZE))))
+        lines = [Segment(Point(Base.rand(0.0:float(GRID_SIZE)), 
+                               Base.rand(0.0:float(GRID_SIZE))), 
+                         Point(Base.rand(0.0:float(GRID_SIZE)),
+                               Base.rand(0.0:float(GRID_SIZE))))
                     for _ in 1:NUM_LINES] # TODO: Make lines more realistic (longer)
-        wells = [Point(rand(0.0:float(GRID_SIZE)), 
-                       rand(0.0:float(GRID_SIZE))) for _ in 1:NUM_WELLS]
+        wells = [Point(Base.rand(0.0:float(GRID_SIZE)), 
+                       Base.rand(0.0:float(GRID_SIZE))) for _ in 1:NUM_WELLS]
         gps = initialize_belief()
-        return new(CGS_State(earth, lines, wells), feature_names, -1.0, gps)
+        return new(CGS_State(earth, lines, wells), feature_names, -1.0, gps, Dict())
     end
 end
 
 function POMDPs.states(pomdp::CGSPOMDP)
     return [pomdp.state]
 end
+function POMDPs.initialstate(pomdp::CGSPOMDP)
+    return Deterministic(pomdp.state)
+end
+POMDPs.stateindex(pomdp::CGSPOMDP, state::CGS_State) = 1
 
 function POMDPs.transition(pomdp::CGSPOMDP, state, action)
-    return SparseCat([state], [1.0])
+    return Deterministic(pomdp.state)
 end
 
 function buy_well_data(pomdp::CGSPOMDP, ind::Int)
@@ -134,26 +141,36 @@ function buy_well_data(pomdp::CGSPOMDP, ind::Int)
 end
 
 
-
 function POMDPs.actions(pomdp::CGSPOMDP)::Vector{NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}}}
     well_actions = [(id=:well_action, geometry=x) for x in pomdp.state.well_logs]
     seismic_actions = [(id=:seismic_action, geometry=x) for x in pomdp.state.seismic_lines]
-    observe_actions = [(id=:observe_action, geometry=x) for x in domain(pomdp.state.earth[1].gt)]
+    observe_actions = [(id=:observe_action, geometry=x.vertices[1]) for x in domain(pomdp.state.earth[1].gt)]
     return [well_actions; seismic_actions; observe_actions]
+end
+
+function POMDPs.actionindex(pomdp, action::@NamedTuple{id::Symbol, geometry::Geometry})
+    if action in keys(pomdp.action_index)
+        return pomdp.action_index[action]
+    end
+    all_actions = POMDPs.actions(pomdp)
+    for (i, action) in enumerate(all_actions)
+        pomdp.action_index[action] = i
+    end
+    return pomdp.action_index[action]
 end
 
 function observe(pomdp::CGSPOMDP, point::Point, layer::Int, column::Symbol, action_id::Symbol)
     f = pomdp.belief[layer][column]
     x = pcu(point)
-    if action_id == :observe_action
+    y = pomdp.state.earth[layer].gt[point, column]
+    unc = ACTION_UNCERTAINTY[(action_id, column)]
+    if unc < 0 # Feature belief not changed by action
         mean_cond = mean(f(x))
         cov_cond = cov(f(x))
     else
-        y = pomdp.state.earth[layer].gt[point, column]
-        unc = ACTION_UNCERTAINTY[(action_id, column)]
         p_fx = posterior(f(x, unc), y)
         pomdp.belief[layer][column] = p_fx
-
+        
         mean_cond = mean(p_fx(x))
         cov_cond = cov(p_fx(x))
     end
@@ -300,14 +317,14 @@ function reward_suitability(pomdp::CGSPOMDP)
 end
 
 function POMDPs.reward(pomdp::CGSPOMDP, state, action)
-    @time action_cost = reward_action_cost(action)
-    println("action_cost $action_cost")
+    action_cost = reward_action_cost(action)
+    # println("action_cost $action_cost")
     
-    @time information_gain = reward_information_gain(pomdp)
-    println("information_gain: $information_gain")
+    information_gain = reward_information_gain(pomdp)
+    # println("information_gain: $information_gain")
     
-    @time suitability = reward_suitability(pomdp)
-    println("reward_suitability: $suitability")
+    suitability = reward_suitability(pomdp)
+    # println("reward_suitability: $suitability")
     
     total_reward = action_cost + information_gain + suitability
     return total_reward
@@ -316,14 +333,23 @@ end
 
 POMDPs.discount(pomdp::CGSPOMDP) = 0.95 
 
+# Visualization functions.
 function visualize_uncertainty(pomdp::CGSPOMDP, layer::Int, column::Symbol)
     gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)])
     ms = marginals(pomdp.belief[layer][column](gridx))
     mg_stds = std.(ms)
     stds_mtx = reshape(mg_stds, GRID_SIZE, GRID_SIZE)'
 
-    heatmap(stds_mtx, color=:viridis, xlabel="X", ylabel="Y", title="Uncertainty Layer $layer Feature $column")
+    heatmap(stds_mtx, 
+            color=:viridis, 
+            xlabel="X", 
+            ylabel="Y", 
+            title="Uncertainty Layer $layer Feature $column",
+            # clims=(0, maximum(mg_stds))
+            )
 end
+
+visualize_gt(pomdp::CGSPOMDP, layer::Int) = viewer(pomdp.state.earth[layer].gt)
 
 # Utility fns
 """

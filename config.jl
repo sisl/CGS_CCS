@@ -34,8 +34,7 @@ a_u = Dict(
     (:well_action, :topSealThickness) => 0.1,
 
     (:seismic_action, :z) => 0.5,
-    (:seismic_action, :permeability) => 0.5, # 
     (:seismic_action, :topSealThickness) => 0.5,
 )
 
-ACTION_UNCERTAINTY = DefaultDict(0.1, a_u)
+ACTION_UNCERTAINTY = DefaultDict(-1., a_u)
