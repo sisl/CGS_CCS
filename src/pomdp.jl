@@ -74,11 +74,11 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
         end
         return randlayers
     end
-    function initialize_belief()::Vector{Dict}
+    function initialize_belief(feature_names::Vector{Symbol})::Vector{Dict}
         starter_beliefs::Vector{Dict} = []
         for layer in 1:NUM_LAYERS
             layer_beliefs = Dict()
-            for column in [:z, :permeability, :topSealThickness]
+            for column in feature_names
                 if column == :z
                     shift, scale = (500 * layer, 300 * 300)
                 else
@@ -100,7 +100,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
                     for _ in 1:NUM_LINES] # TODO: Make lines more realistic (longer)
         wells = [Point(Base.rand(0.0:float(GRID_SIZE)), 
                        Base.rand(0.0:float(GRID_SIZE))) for _ in 1:NUM_WELLS]
-        gps = initialize_belief()
+        gps = initialize_belief(feature_names)
         return new(CCS_State(earth, lines, wells), feature_names, -1.0, gps, Dict())
     end
 end
@@ -126,7 +126,7 @@ end
 function POMDPs.actions(pomdp::CCSPOMDP)::Vector{NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}}}
     well_actions = [(id=:well_action, geometry=x) for x in pomdp.state.well_logs]
     seismic_actions = [(id=:seismic_action, geometry=x) for x in pomdp.state.seismic_lines]
-    observe_actions = [(id=:observe_action, geometry=x.vertices[1]) for x in domain(pomdp.state.earth[1].gt)]
+    observe_actions = [] # [(id=:observe_action, geometry=x.vertices[1]) for x in domain(pomdp.state.earth[1].gt)]
     return [well_actions; seismic_actions; observe_actions]
 end
 
@@ -301,7 +301,7 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action)
     suitability = reward_suitability(pomdp)
     # println("reward_suitability: $suitability")
     
-    total_reward = action_cost + information_gain + suitability
+    total_reward = action_cost + λ_1 * information_gain + λ_2 * suitability
     return total_reward
 end
 

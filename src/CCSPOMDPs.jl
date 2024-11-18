@@ -6,7 +6,6 @@ using Statistics
 using GeoStats
 using Random
 using DataFrames
-using LinearAlgebra
 import GLMakie as Mke
 using Infiltrator
 using AbstractGPs

@@ -25,6 +25,8 @@ const SEISMIC_LINE_COST = 4
 const SUITABILITY_THRESHOLD = 3.5
 const SUITABILITY_BIAS = 0.7
 const SUITABILITY_NSAMPLES = 50
+const λ_1 = 10
+const λ_2 = 1e-4
 
 # Action Uncertainty
 a_u = Dict(
