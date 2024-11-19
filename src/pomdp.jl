@@ -141,7 +141,6 @@ function POMDPs.actionindex(pomdp, action::@NamedTuple{id::Symbol, geometry::Geo
     return pomdp.action_index[action]
 end
 
-using LinearAlgebra # TODO: Get rid of this
 function observe(pomdp::CCSPOMDP, point::Point, layer::Int, column::Symbol, action_id::Symbol)
     f = pomdp.belief[layer][column]
     x = pcu(point)
@@ -203,9 +202,14 @@ function observe(pomdp::CCSPOMDP, action)
                 for layer in 1:NUM_LAYERS]...)
 end
 
+function POMDPs.observation(pomdp::CCSPOMDP, action, state)
+    # This avgs .8 s or less, working on reward for now.
+    # println("observation $(action.id)")
+    # @time val = product_distribution(observe(pomdp, action))
+    # return val
 
-POMDPs.observation(pomdp::CCSPOMDP, action, state) = return product_distribution(observe(pomdp, action))
-
+    return product_distribution(observe(pomdp, action))
+end
 function reward_action_cost(action::NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}})
     if action.id == :well_action
         return -WELL_COST
@@ -307,15 +311,14 @@ function reward_suitability(pomdp::CCSPOMDP)
 end
 
 function POMDPs.reward(pomdp::CCSPOMDP, state, action)
+    # println("reward $(action.id)")
     action_cost = reward_action_cost(action)
-    # println("action_cost $action_cost")
     
     information_gain = reward_information_gain(pomdp)
-    # println("information_gain: $information_gain")
     
-    suitability = reward_suitability(pomdp)
-    # println("reward_suitability: $suitability")
-    
+    println("suitability")
+    @time suitability = reward_suitability(pomdp)
+
     total_reward = action_cost + λ_1 * information_gain + λ_2 * suitability
     return total_reward
 end
