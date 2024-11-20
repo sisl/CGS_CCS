@@ -8,7 +8,7 @@ const SEISMIC_N_POINTS = 5
 
 # Belief Initialization
 PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
-    :permeability => (500, 300 * 300), # miniDarcy
+    :permeability => (500, 300 * 300), # miniDarcy # log transform!
     :topSealThickness => (45, 20 * 20) # meters
 )
 
@@ -30,9 +30,19 @@ const λ_1 = 10
 const λ_2 = 1e-4
 
 # Action Uncertainty
+# Get references for these
+
+# Rock types: Sandstone, siltstone (grewake), shale
+# Update permeability conditioned on rock type
+
+# Use Belief MCTS as a baseline policy. If that doesn't work then POMCPOW ig.
+# Does this beat random policy, grid/max coverage policy
+# If far wells, include those, otherwise ensure coverage (grid) with budget
+
+# Sampling plans in optimization textbook
 a_u = Dict(
     (:well_action, :z) => 9, # within 3 m
-    (:well_action, :permeability) => 100, # std 10 miniDarcy
+    (:well_action, :permeability) => 100, # std 10 miniDarcy log transform!
     (:well_action, :topSealThickness) => 4, # std 2 m
 
     (:seismic_action, :z) => 100, # within 10 m
