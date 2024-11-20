@@ -50,6 +50,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     map_uncertainty::Float64 # Some measure of uncertainty over the whole map
     belief::Vector{Dict{Symbol, Any}} # Every layer/feature combo is an independent GP
     action_index::Dict
+
     function initialize_earth()::Vector{LayerFeatures}
         randlayers::Vector{LayerFeatures} = []
         prev_mean = 0.
@@ -74,6 +75,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
         end
         return randlayers
     end
+
     function initialize_belief(feature_names::Vector{Symbol})::Vector{Dict}
         starter_beliefs::Vector{Dict} = []
         for layer in 1:NUM_LAYERS
@@ -84,12 +86,13 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
                 else
                     shift, scale = PRIOR_BELIEF[column]
                 end
-                layer_beliefs[column] = GP(shift, scale * Matern32Kernel())
+                layer_beliefs[column] = GP(shift, scale * Matern52Kernel())
             end
             push!(starter_beliefs, layer_beliefs)
         end
         return starter_beliefs
     end
+
     function CCSPOMDP()
         earth = initialize_earth()
         feature_names = [:z, :permeability, :topSealThickness]
@@ -107,25 +110,18 @@ end
 
 include("utils.jl")
 
-function POMDPs.states(pomdp::CCSPOMDP)
-    return [pomdp.state]
-end
-function POMDPs.initialstate(pomdp::CCSPOMDP)
-    return Deterministic(pomdp.state)
-end
+POMDPs.states(pomdp::CCSPOMDP) = [pomdp.state]
+
+POMDPs.initialstate(pomdp::CCSPOMDP) = Deterministic(pomdp.state)
+
 POMDPs.stateindex(pomdp::CCSPOMDP, state::CCS_State) = 1
 
 POMDPs.transition(pomdp::CCSPOMDP, state, action) = Deterministic(pomdp.state)
 
-function buy_well_data(pomdp::CCSPOMDP, ind::Int)
-    well = pomdp.state.well_logs[ind]
-    push!(pomdp.collected_locs, well)
-end
-
-
 function POMDPs.actions(pomdp::CCSPOMDP)::Vector{NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}}}
     well_actions = [(id=:well_action, geometry=x) for x in pomdp.state.well_logs]
     seismic_actions = [(id=:seismic_action, geometry=x) for x in pomdp.state.seismic_lines]
+    # Removing observe actions for the time being.
     observe_actions = [] # [(id=:observe_action, geometry=x.vertices[1]) for x in domain(pomdp.state.earth[1].gt)]
     return [well_actions; seismic_actions; observe_actions]
 end
@@ -161,7 +157,7 @@ function observe(pomdp::CCSPOMDP, point::Point, layer::Int, column::Symbol, acti
 end
 
 function observe(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol, action_id::Symbol)
-    p1 = geom.vertices[1] # if slow we can move these lines to the calling fn
+    p1 = geom.vertices[1]
     p2 = geom.vertices[2]
     points = [p1 * (1 - t) + p2 * t for t in range(0, stop=1, length=SEISMIC_N_POINTS)] 
     
@@ -178,15 +174,6 @@ function observe(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol, act
         
         mean_cond = mean(p_fx(x))
         cov_cond = cov(p_fx(x))
-        # cov_cond = (cov_cond + cov_cond') / 2
-        # cov_cond += 1e-4 * I
-        # println("Original Cov Matrix for feature $column")
-        # println(cov(f(x)))
-        # println("Updated Cov Matrix, variance $(unc) for feature $column")
-        # println(cov_cond)
-        # if !isposdef(cov_cond)
-        #     error("Covariance matrix is not positive definite!")
-        # end
     end
     joint_conditional_dist = MvNormal(mean_cond, cov_cond)
     return joint_conditional_dist
@@ -210,6 +197,7 @@ function POMDPs.observation(pomdp::CCSPOMDP, action, state)
 
     return product_distribution(observe(pomdp, action))
 end
+
 function reward_action_cost(action::NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}})
     if action.id == :well_action
         return -WELL_COST
@@ -289,23 +277,25 @@ function reward_suitability(pomdp::CCSPOMDP)
     total_grid_suitability = 0.
     for layer in 1:NUM_LAYERS
         gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)])
-        for pt in gridx
-            # For each column gerate a distribution
-            pt_score_samples = zeros(SUITABILITY_NSAMPLES)
-            for column in pomdp.feature_names
-                fgrid = pomdp.belief[layer][column]([pt])
-                pt_score_samples .+= [score_component(column, rand(fgrid)[1]) for _ in 1:SUITABILITY_NSAMPLES]
-            end
-            pt_score_samples ./= length(pomdp.feature_names)
-            cnt_better = mean(pt_score_samples .> 3.5)
-            if cnt_better > 0.8
-                total_grid_suitability += 1.0
-            end
-            cnt_worse = mean(pt_score_samples .< 3.5)
-            if cnt_worse > 0.8
-                total_grid_suitability += SUITABILITY_BIAS
-            end
+        sample_values = zeros(length(gridx) * SUITABILITY_NSAMPLES)
+        for column in pomdp.feature_names
+            fgrid = pomdp.belief[layer][column](gridx)
+            fs = marginals(fgrid)
+            marginal_means = mean.(fs)
+            marginal_stds = std.(fs)
+            norms = [Normal(μ, σ) for (μ, σ) in zip(marginal_means, marginal_stds)]
+            incr = [score_component(column, rand(N)) for N in norms for _ in 1:SUITABILITY_NSAMPLES]
+            sample_values .+= incr
         end
+        sample_values ./= length(pomdp.feature_names)
+        sample_matr = reshape(sample_values, length(gridx), SUITABILITY_NSAMPLES)
+        bits_matr = sample_matr .> SUITABILITY_THRESHOLD
+        suitable_pts = (Statistics.mean(bits_matr, dims=2) .>= SUITABILITY_CONF_THRESHOLD)
+        total_grid_suitability += 1.0 * sum(suitable_pts)
+
+        bits_matr = .!bits_matr
+        unsuitable_pts = (Statistics.mean(bits_matr, dims=2) .>= SUITABILITY_CONF_THRESHOLD)
+        total_grid_suitability += SUITABILITY_BIAS * sum(unsuitable_pts)
     end
     return total_grid_suitability
 end
@@ -316,14 +306,10 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action)
     
     information_gain = reward_information_gain(pomdp)
     
-    println("suitability")
-    @time suitability = reward_suitability(pomdp)
+    suitability = reward_suitability(pomdp)
 
     total_reward = action_cost + λ_1 * information_gain + λ_2 * suitability
     return total_reward
 end
 
-
 POMDPs.discount(pomdp::CCSPOMDP) = 0.95 
-
-
