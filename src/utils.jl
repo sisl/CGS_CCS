@@ -21,11 +21,21 @@ Distributions.quantile(d::Deterministic, p::Real) = d.value # Not sure about thi
 
 
 # Visualization functions.
+"""
+Visualize the uncertainty in the belief of a layer and feature.
+Note that when rock type is uncertain, this uncertainty visualization can be a poor approximation.
+"""
 function visualize_uncertainty(pomdp::CCSPOMDP, layer::Int, column::Symbol)
+    stds_mtx = zeros(GRID_SIZE, GRID_SIZE)
     gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)])
-    ms = marginals(pomdp.belief[layer][column](gridx))
-    mg_stds = std.(ms)
-    stds_mtx = reshape(mg_stds, GRID_SIZE, GRID_SIZE)'
+    for rocktype in 1:length(instances(RockType))
+        if pomdp.rocktype_belief.p[rocktype] == 0.0
+            continue
+        end
+        ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
+        mg_stds = std.(ms) * sqrt(pomdp.rocktype_belief.p[rocktype])
+        stds_mtx .+= reshape(mg_stds, GRID_SIZE, GRID_SIZE)'
+    end
 
     heatmap(stds_mtx, 
             color=:viridis, 
