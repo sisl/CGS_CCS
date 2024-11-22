@@ -29,11 +29,11 @@ function visualize_uncertainty(pomdp::CCSPOMDP, layer::Int, column::Symbol)
     stds_mtx = zeros(GRID_SIZE, GRID_SIZE)
     gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)])
     for rocktype in 1:length(instances(RockType))
-        if pomdp.rocktype_belief.p[rocktype] == 0.0
+        if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
             continue
         end
         ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
-        mg_stds = std.(ms) * sqrt(pomdp.rocktype_belief.p[rocktype])
+        mg_stds = std.(ms) * sqrt(pomdp.rocktype_belief[layer].p[rocktype])
         stds_mtx .+= reshape(mg_stds, GRID_SIZE, GRID_SIZE)'
     end
 
@@ -75,4 +75,8 @@ end
 
 function Base.:+(p1::Point, p2::Point)
     Point(p1.coords.x + p2.coords.x, p1.coords.y + p2.coords.y)
+end
+
+function Base.:-(p1::Point, p2::Point) # Minus between points returns distance
+    √((p1.coords.x - p2.coords.x) ^ 2 + (p1.coords.y - p2.coords.y) ^ 2)
 end

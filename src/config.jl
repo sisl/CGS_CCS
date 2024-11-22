@@ -3,6 +3,7 @@ const NUM_LAYERS = 5
 const NUM_LINES = 7
 const NUM_WELLS = 15
 const GRID_SIZE = 100
+const SPACING = 100 # 100 m grid cells
 
 const SEISMIC_N_POINTS = 5
 
@@ -53,7 +54,7 @@ const λ_2 = 1e-4
 # Sampling plans in optimization textbook
 a_u = Dict(
     (:well_action, :z) => 9, # within 3 m
-    (:well_action, :permeability) => 100, # std 10 miniDarcy log transform!
+    (:well_action, :permeability) => .05 * 0.05, # miniDarcy log transform
     (:well_action, :topSealThickness) => 4, # std 2 m
 
     (:seismic_action, :z) => 100, # within 10 m
@@ -62,7 +63,26 @@ a_u = Dict(
 
 ACTION_UNCERTAINTY = DefaultDict(-1., a_u)
 
-# Variogram hyperparams # TODO: vary for each feature.
-const RANGE = 15.
-const SILL = 3.0
-const NUGGET = 0.1
+# Variogram hyperparams
+# Variogram hyperparams for permeability, for each rock type
+# Rock type ordering is same as enum, Sandstone, Siltstone, Shale
+const PERMEABILITY_NUGGET = 0.1, 0.05, 0.05 # (log(mD))
+const PERMEABILITY_SILL = 2.0, 0.5, 0.5 # (log(mD))
+const PERMEABILITY_RANGE = 1000, 500, 300 # meters
+
+# Variogram hyperparams for topSealThickness, for each rock type
+# Note all the values are the same because the topseal is independent of rock type
+const TOPSEAL_NUGGET = 2, 2, 2 # meters
+const TOPSEAL_SILL = 500, 500, 500 # meters
+const TOPSEAL_RANGE = 2000, 2000, 2000 # meters
+
+# Variogram hyperparams for z, for each rock type
+const Z_NUGGET = 2, 2, 2 # meters
+const Z_SILL = 50, 50, 50 # meters
+const Z_RANGE = 1500, 1500, 1500 # meters
+
+VARIOGRAM_HYPERPARAMS = Dict(
+    :permeability => (PERMEABILITY_NUGGET, PERMEABILITY_SILL, PERMEABILITY_RANGE),
+    :topSealThickness => (TOPSEAL_NUGGET, TOPSEAL_SILL, TOPSEAL_RANGE),
+    :z => (Z_NUGGET, Z_SILL, Z_RANGE)
+)

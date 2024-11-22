@@ -1,7 +1,4 @@
 struct GeoFeatures
-    range::Number
-    sill::Number
-    nugget::Number
     name::Symbol
     mean::Number
 end
@@ -17,10 +14,12 @@ struct LayerFeatures
     df::DataFrame
     layer_rocktype::RockType
     function LayerFeatures(feats::Vector{GeoFeatures})
-        grid = CartesianGrid(GRID_SIZE, GRID_SIZE)
+        layer_rtype = Base.rand(1:3)
+        grid = CartesianGrid((GRID_SIZE, GRID_SIZE), (0., 0.), (SPACING, SPACING))
         dfs::Vector{DataFrame} = []
         for feat in feats
-            proc = GaussianProcess(SphericalVariogram(range=feat.range, sill=feat.sill, nugget=feat.nugget), feat.mean)
+            range, sill, nugget = VARIOGRAM_HYPERPARAMS[feat.name][layer_rtype]
+            proc = GaussianProcess(SphericalVariogram(range=range, sill=sill, nugget=nugget), feat.mean)
             simul = GeoStats.rand(proc, grid, [feat.name => Float64], 1)[1]
             feat_dataframe = DataFrame(simul)
             select!(feat_dataframe, Not(:geometry))
@@ -29,8 +28,7 @@ struct LayerFeatures
         all_feature_df = hcat(dfs...)
         all_feature_gt = georef(all_feature_df, grid)
         
-        layer_rtype = RockType(Base.rand(1:3))
-        return new(all_feature_gt, all_feature_df, layer_rtype)
+        return new(all_feature_gt, all_feature_df, RockType(layer_rtype))
     end
 end
 
@@ -46,6 +44,28 @@ struct CCS_State
     well_logs::Vector{Point}
 end
 
+struct ScaledEuclidean <: Distances.PreMetric
+end
+
+@inline function Distances._evaluate(::ScaledEuclidean,a::AbstractVector{T},b::AbstractVector{T}) where {T}
+    @boundscheck if length(a) != length(b)
+        throw(DimensionMismatch("first array has length $(length(a)) which does not match the length of the second, $(length(b))."))
+    end
+    ans = sqrt(sum((a .- b) .^ 2)) / 300
+    # if Base.rand(1:300) == 77
+    #     println("Dist betweeen $a and $b is $ans")
+    # end
+    return ans
+end
+
+@inline (dist::ScaledEuclidean)(a::AbstractArray,b::AbstractArray) = Distances._evaluate(dist,a,b)
+@inline (dist::ScaledEuclidean)(a::Number, b::Number) = begin
+    # println("Dist betweeen $a and $b is $(Euclidean()(a, b))") # Always checks between 1.0 and 1.0 for some reason
+    Euclidean()(a, b) / 300
+end
+
+
+
 mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Geometry}, Any}
     state::CCS_State
     feature_names::Vector{Symbol}
@@ -60,16 +80,16 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
         for layer in 1:NUM_LAYERS
             layer_params::Vector{GeoFeatures} = []
             if layer == 1
-                push!(layer_params, GeoFeatures(RANGE, SILL, NUGGET, :z, 0.))
+                push!(layer_params, GeoFeatures(:z, 0.))
             else
                 prev_mean += Base.rand(300:800)
-                push!(layer_params, GeoFeatures(RANGE, SILL, NUGGET, :z, prev_mean))
+                push!(layer_params, GeoFeatures(:z, prev_mean))
             end
             
             λ = 100
-            push!(layer_params, GeoFeatures(RANGE, SILL, NUGGET, :permeability, Base.rand(Exponential(λ))))
+            push!(layer_params, GeoFeatures(:permeability, Base.rand(Exponential(λ))))
             
-            push!(layer_params, GeoFeatures(RANGE, SILL, NUGGET, :topSealThickness, Base.rand(10:80)))
+            push!(layer_params, GeoFeatures(:topSealThickness, Base.rand(10:80)))
 
             push!(randlayers, LayerFeatures(layer_params))
         end
@@ -89,7 +109,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
                     else
                         shift, scale = PRIOR_BELIEF[(column, RockType(rocktype))]
                     end
-                    layer_beliefs[column] = GP(shift, scale * Matern52Kernel())
+                    layer_beliefs[column] = GP(shift, ScaledKernel(MaternKernel(ν=1.5, metric=ScaledEuclidean()), scale))
                 end
                 push!(rocktype_starter_beliefs, layer_beliefs)
             end
@@ -101,13 +121,13 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     function CCSPOMDP()
         earth = initialize_earth()
         feature_names = [:z, :permeability, :topSealThickness]
-        lines = [Segment(Point(Base.rand(0.0:float(GRID_SIZE)), 
-                               Base.rand(0.0:float(GRID_SIZE))), 
-                         Point(Base.rand(0.0:float(GRID_SIZE)),
-                               Base.rand(0.0:float(GRID_SIZE))))
+        lines = [Segment(Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
+                               Base.rand(0.0:float(GRID_SIZE * SPACING))), 
+                         Point(Base.rand(0.0:float(GRID_SIZE * SPACING)),
+                               Base.rand(0.0:float(GRID_SIZE * SPACING))))
                     for _ in 1:NUM_LINES]
-        wells = [Point(Base.rand(0.0:float(GRID_SIZE)), 
-                       Base.rand(0.0:float(GRID_SIZE))) for _ in 1:NUM_WELLS]
+        wells = [Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
+                       Base.rand(0.0:float(GRID_SIZE * SPACING))) for _ in 1:NUM_WELLS]
         gps = initialize_belief(feature_names)
         rtype_belief = [Distributions.Categorical(3) for _ in 1:NUM_LAYERS]
         return new(CCS_State(earth, lines, wells), 
@@ -276,7 +296,7 @@ function calculate_map_uncertainty(pomdp::CCSPOMDP)
                 gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)])
                 fgrid = pomdp.belief[rocktype][layer][column](gridx)
                 fs = marginals(fgrid)
-                marginal_stds = std.(fs) * sqrt(pomdp.rocktype_belief[1].p[rocktype])
+                marginal_stds = std.(fs) * sqrt(pomdp.rocktype_belief[layer].p[rocktype])
                 layer_col_unc += sum(marginal_stds)
             end
         end
