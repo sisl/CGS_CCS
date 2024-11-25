@@ -5,7 +5,7 @@ const NUM_WELLS = 15
 const GRID_SIZE = 100
 const SPACING = 100 # 100 m grid cells
 
-const SEISMIC_N_POINTS = 5
+const SEISMIC_N_POINTS = 15
 
 @enum RockType SANDSTONE=1 SILTSTONE=2 SHALE=3
 

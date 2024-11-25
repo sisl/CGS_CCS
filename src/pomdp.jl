@@ -176,7 +176,9 @@ function observe(pomdp::CCSPOMDP, point::Point, layer::Int, column::Symbol, acti
     unc = ACTION_UNCERTAINTY[(action_id, column)]
     
     for rocktype in 1:length(instances(RockType))
-        # TODO: Add a short circuit when rocktype has probability 0
+        if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
+            MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
+        end
         f = pomdp.belief[rocktype][layer][column]
         if unc < 0 # Feature belief not changed by action
             mean_cond = mean(f(x))
@@ -196,13 +198,16 @@ end
 function observe(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol, action_id::Symbol)
     p1 = geom.vertices[1]
     p2 = geom.vertices[2]
-    points = [p1 * (1 - t) + p2 * t for t in range(0, stop=1, length=SEISMIC_N_POINTS)] 
+    points = [p1 * (1 - t) + p2 * t for t in range(0, stop=1, length=SEISMIC_N_POINTS)]
     obs_conditioned_on_rocktype = Vector{MvNormal}(undef, length(instances(RockType))) # TODO: Replace this Any
     x = pcu(points)
     y = [pomdp.state.earth[layer].gt[pt, column][1] for pt in points]
     unc = ACTION_UNCERTAINTY[(action_id, column)]
 
     for rocktype in 1:length(instances(RockType))
+        if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
+            MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
+        end
         f = pomdp.belief[rocktype][layer][column]
         if unc < 0 # Feature belief not changed by action
             mean_cond = mean(f(x))
@@ -286,21 +291,36 @@ end
 
 function calculate_map_uncertainty(pomdp::CCSPOMDP)
     layer_col_unc::Float64 = 0.0
-    for rocktype in 1:length(instances(RockType))
-        if pomdp.rocktype_belief[1].p[rocktype] == 0.0
-            # Same assumption as reward_suitability
-            continue
-        end
-        for layer in 1:NUM_LAYERS
-            for column in pomdp.feature_names
-                gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)])
-                fgrid = pomdp.belief[rocktype][layer][column](gridx)
-                fs = marginals(fgrid)
-                marginal_stds = std.(fs) * sqrt(pomdp.rocktype_belief[layer].p[rocktype])
-                layer_col_unc += sum(marginal_stds)
+    for layer in 1:NUM_LAYERS
+        gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)]) 
+        for column in pomdp.feature_names
+            var_mtx = zeros(GRID_SIZE, GRID_SIZE)
+            all_rock_mean = zeros(length(gridx))
+            for rocktype in 1:length(instances(RockType))
+                if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
+                    continue
+                end
+                ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
+                all_rock_mean += mean.(ms) * pomdp.rocktype_belief[layer].p[rocktype]
             end
+
+            all_rock_mean .^= 2
+            # Eqn for mixture distribution: https://en.wikipedia.org/wiki/Mixture_distribution
+
+            for rocktype in 1:length(instances(RockType))
+                if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
+                    continue
+                end
+                ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
+                mg_stds = std.(ms)
+                mg_means = mean.(ms)
+                var_compontent = ((mg_stds .^ 2) + (mg_means - all_rock_mean) .^ 2) * pomdp.rocktype_belief[layer].p[rocktype]
+                var_mtx .+= reshape(var_compontent, GRID_SIZE, GRID_SIZE)'
+            end
+            layer_col_unc += sum(sqrt.(var_mtx))
         end
     end
+
     pomdp.map_uncertainty = layer_col_unc
     return layer_col_unc
 end
