@@ -374,7 +374,7 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action)
     # println("reward $(action.id)")
     action_cost = reward_action_cost(action)
     
-    @time information_gain = reward_information_gain(pomdp)
+    @time information_gain = reward_information_gain(pomdp, action)
     
     @time suitability = reward_suitability(pomdp)
 
