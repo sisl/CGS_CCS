@@ -289,7 +289,7 @@ function score_component(feature::Symbol, value)
     end
 end
 
-function calculate_map_uncertainty(pomdp::CCSPOMDP)
+function calculate_map_uncertainty(pomdp::CCSPOMDP, action::NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}})
     layer_col_unc = 0.0
     var_mtx = zeros(GRID_SIZE, GRID_SIZE)
     gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[1].gt)])
@@ -330,15 +330,9 @@ function calculate_map_uncertainty(pomdp::CCSPOMDP)
     return layer_col_unc
 end
 
-function reward_information_gain(pomdp::CCSPOMDP)
-    r::Float64 = pomdp.map_uncertainty
-    if r < 0
-        calculate_map_uncertainty(pomdp)
-        return 1.0 # If its the first action, we don't know how much better we've done TODO: Fix this
-        # Does this incentivize bad first actions?? Most likely yes, talk to Mansur
-    end
-    r -= calculate_map_uncertainty(pomdp)
-    return r
+function reward_information_gain(pomdp::CCSPOMDP, action::NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}})
+    original_uncertainty::Float64 = pomdp.map_uncertainty
+    return original_uncertainty - calculate_map_uncertainty(pomdp, action)
 end
 
 function reward_suitability(pomdp::CCSPOMDP)
