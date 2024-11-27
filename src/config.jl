@@ -37,7 +37,7 @@ const SEISMIC_LINE_COST = 4
 const SUITABILITY_THRESHOLD = 3.5
 const SUITABILITY_CONF_THRESHOLD = 0.8
 const SUITABILITY_BIAS = 0.7
-const SUITABILITY_NSAMPLES = 25
+const SUITABILITY_NSAMPLES = 24 # Good to have a multiple of number of rock types
 const λ_1 = 10
 const λ_2 = 1e-4
 

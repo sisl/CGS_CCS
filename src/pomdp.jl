@@ -289,7 +289,9 @@ function score_component(feature::Symbol, value)
     end
 end
 
-function calculate_map_uncertainty(pomdp::CCSPOMDP, action::NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}})
+function reward_information_gain_suitability(pomdp::CCSPOMDP)
+    original_uncertainty::Float64 = pomdp.map_uncertainty
+
     layer_col_unc = 0.0
     var_mtx = zeros(GRID_SIZE, GRID_SIZE)
     gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[1].gt)])
@@ -327,45 +329,42 @@ function calculate_map_uncertainty(pomdp::CCSPOMDP, action::NamedTuple{(:id, :ge
     end
 
     pomdp.map_uncertainty = layer_col_unc
-    return layer_col_unc
-end
 
-function reward_information_gain(pomdp::CCSPOMDP, action::NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}})
-    original_uncertainty::Float64 = pomdp.map_uncertainty
-    return original_uncertainty - calculate_map_uncertainty(pomdp, action)
+    return original_uncertainty - layer_col_unc, reward_suitability(pomdp)
 end
 
 function reward_suitability(pomdp::CCSPOMDP)
     total_grid_suitability = 0. # This method stratifies sampling on rock type.
-    for rocktype in 1:length(instances(RockType))
-        if pomdp.rocktype_belief[1].p[rocktype] == 0.0
-            # Assumption: Layer 1 rocktype is known, meaning we must have taken a well action, 
-            # so all layer rock types are known. If this becomes problematic, just move these lines
-            # down into the next loop.
-            continue 
-        end
-        for layer in 1:NUM_LAYERS
-            gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)])
-            sample_values = zeros(length(gridx) * SUITABILITY_NSAMPLES)
-            for column in pomdp.feature_names
+    for layer in 1:NUM_LAYERS
+        gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)])
+        npts = length(gridx)
+        sample_values = zeros(npts * SUITABILITY_NSAMPLES)
+        prob_mask = zeros(SUITABILITY_NSAMPLES)
+        for column in pomdp.feature_names
+            prev_end = 0
+            for rocktype in 1:length(instances(RockType))
+                belief_prob = pomdp.rocktype_belief[layer].p[rocktype]
+                rocktype_nsamples = Int(floor(belief_prob * SUITABILITY_NSAMPLES))
                 fgrid = pomdp.belief[rocktype][layer][column](gridx)
                 fs = marginals(fgrid)
                 marginal_means = mean.(fs)
                 marginal_stds = std.(fs)
                 norms = [Normal(μ, σ) for (μ, σ) in zip(marginal_means, marginal_stds)]
-                incr = [score_component(column, rand(N)) for N in norms for _ in 1:SUITABILITY_NSAMPLES]
-                sample_values .+= incr
+                incr = [score_component(column, rand(N)) for N in norms for _ in 1:rocktype_nsamples]
+                sample_values[npts * prev_end + 1: npts * (prev_end + rocktype_nsamples)] .+= incr
+                prob_mask[prev_end + 1:prev_end + rocktype_nsamples] .= rocktype
+                prev_end += rocktype_nsamples
             end
-            sample_values ./= length(pomdp.feature_names)
-            sample_matr = reshape(sample_values, length(gridx), SUITABILITY_NSAMPLES)
-            bits_matr = sample_matr .> SUITABILITY_THRESHOLD
-            suitable_pts = (Statistics.mean(bits_matr, dims=2) .>= SUITABILITY_CONF_THRESHOLD)
-            total_grid_suitability += 1.0 * sum(suitable_pts) * pomdp.rocktype_belief[layer].p[rocktype]
-
-            bits_matr = .!bits_matr
-            unsuitable_pts = (Statistics.mean(bits_matr, dims=2) .>= SUITABILITY_CONF_THRESHOLD)
-            total_grid_suitability += SUITABILITY_BIAS * sum(unsuitable_pts) * pomdp.rocktype_belief[layer].p[rocktype]
         end
+        sample_values ./= length(pomdp.feature_names)
+        sample_matr = reshape(sample_values, length(gridx), SUITABILITY_NSAMPLES)
+        bits_matr = sample_matr .> SUITABILITY_THRESHOLD
+        suitable_pts = (Statistics.mean(bits_matr .* prob_mask', dims=2) .>= SUITABILITY_CONF_THRESHOLD)
+        total_grid_suitability += 1.0 * sum(suitable_pts)
+
+        bits_matr = .!bits_matr
+        unsuitable_pts = (Statistics.mean(bits_matr .* prob_mask', dims=2) .>= SUITABILITY_CONF_THRESHOLD)
+        total_grid_suitability += SUITABILITY_BIAS * sum(unsuitable_pts)
     end
     return total_grid_suitability
 end
@@ -374,9 +373,7 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action)
     # println("reward $(action.id)")
     action_cost = reward_action_cost(action)
     
-    @time information_gain = reward_information_gain(pomdp)
-    
-    @time suitability = reward_suitability(pomdp)
+    @time information_gain, suitability = reward_information_gain_suitability(pomdp)
 
     total_reward = action_cost + λ_1 * information_gain + λ_2 * suitability
     return total_reward
