@@ -70,6 +70,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     state::CCS_State
     feature_names::Vector{Symbol}
     map_uncertainty::Float64 # Some measure of uncertainty over the whole map
+    # order is layer, column, rocktype
     belief::Vector{Dict{Symbol, Vector{Any}}} # Every layer/feature combo has 3 GPs : for shale, siltstone, sandstone
     action_index::Dict
     rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
