@@ -27,6 +27,10 @@ PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
     (:topSealThickness, SILTSTONE) => (45, 15 * 15), # meters
     (:topSealThickness, SHALE) => (45, 15 * 15), # meters
 
+    # These aren't actually used in GP initialization, but kept for consistency in the reward fn
+    (:z, SANDSTONE) => (500, 200 * 200), # meters
+    (:z, SILTSTONE) => (500, 200 * 200), # meters
+    (:z, SHALE) => (500, 200 * 200), # meters
 )
 
 # Action costs
