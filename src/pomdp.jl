@@ -294,7 +294,7 @@ Computes the information gain and suitability reward components
 While this would be more readable as two separate functions, the pattern of indexing
 (layer, column, rocktype) is the same for both, so for performance reasons, we combine them.
 
-Information gain is measured as the sum of marginal standard deviations of the GP
+Information gain is measured as the mean of scaled marginal standard deviations of the GP
 # Eqn for variance of mixture distribution: https://en.wikipedia.org/wiki/Mixture_distribution
 
 Suitability is measured as the sum of the number of points that we are confident are suitable or unsuitable.
@@ -308,7 +308,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
 
     # information_gain
     layer_col_unc = 0.0
-    var_mtx = zeros(GRID_SIZE, GRID_SIZE)
+    scaled_var_mtx = zeros(GRID_SIZE, GRID_SIZE)
     all_rock_mean = zeros(npts)
     
     # suitability
@@ -323,7 +323,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
 
         for column in pomdp.feature_names
             # information_gain
-            fill!(var_mtx, 0.0)
+            fill!(scaled_var_mtx, 0.0)
             fill!(all_rock_mean, 0.0)
 
             # This is information_gain
@@ -332,8 +332,6 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
                                     pomdp.rocktype_belief[layer].p[rocktype] 
                                     for rocktype in 1:length(instances(RockType))
                                 )
-            
-            all_rock_mean .^= 2
             
             # suitability
             prev_end = 0
@@ -349,7 +347,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
 
                 # information gain
                 var_compontent = ((mg_stds .^ 2) .+ (mg_means .- all_rock_mean) .^ 2) .* belief_prob
-                var_mtx .+= reshape(var_compontent, GRID_SIZE, GRID_SIZE)'
+                scaled_var_mtx .+= reshape(var_compontent, GRID_SIZE, GRID_SIZE)' ./ PRIOR_BELIEF[(column, RockType(rocktype))][2]
 
                 # suitability
                 rocktype_nsamples = Int(floor(belief_prob * SUITABILITY_NSAMPLES))
@@ -359,7 +357,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
                 prob_mask[prev_end + 1:prev_end + rocktype_nsamples] .= rocktype
                 prev_end += rocktype_nsamples
             end
-            layer_col_unc += sum(sqrt.(var_mtx))
+            layer_col_unc += mean(sqrt.(scaled_var_mtx))
         end
         # suitability
         sample_values ./= length(pomdp.feature_names)

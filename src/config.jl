@@ -27,6 +27,10 @@ PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
     (:topSealThickness, SILTSTONE) => (45, 15 * 15), # meters
     (:topSealThickness, SHALE) => (45, 15 * 15), # meters
 
+    # These aren't actually used in GP initialization, but kept for consistency in the reward fn
+    (:z, SANDSTONE) => (500, 200 * 200), # meters
+    (:z, SILTSTONE) => (500, 200 * 200), # meters
+    (:z, SHALE) => (500, 200 * 200), # meters
 )
 
 # Action costs
@@ -38,7 +42,7 @@ const SUITABILITY_THRESHOLD = 3.5
 const SUITABILITY_CONF_THRESHOLD = 0.8
 const SUITABILITY_BIAS = 0.7
 const SUITABILITY_NSAMPLES = 24 # Good to have a multiple of number of rock types
-const λ_1 = 10
+const λ_1 = 5
 const λ_2 = 1e-4
 
 # Action Uncertainty
