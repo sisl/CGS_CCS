@@ -70,7 +70,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     state::CCS_State
     feature_names::Vector{Symbol}
     map_uncertainty::Float64 # Some measure of uncertainty over the whole map
-    belief::Vector{Vector{Dict{Symbol, Any}}} # Every layer/feature combo has 3 GPs : for shale, siltstone, sandstone
+    belief::Vector{Dict{Symbol, Vector{Any}}} # Every layer/feature combo has 3 GPs : for shale, siltstone, sandstone
     action_index::Dict
     rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
 
@@ -96,24 +96,24 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
         return randlayers
     end
 
-    function initialize_belief(feature_names::Vector{Symbol})::Vector{Vector{Dict}}
-        starter_beliefs::Vector{Vector{Dict}} = []
-        for rocktype in 1:length(instances(RockType))
-            rocktype_starter_beliefs::Vector{Dict} = []
-            for layer in 1:NUM_LAYERS
-                layer_beliefs = Dict()
-                for column in feature_names
+    function initialize_belief(feature_names::Vector{Symbol})::Vector{Dict{Symbol, Vector{Any}}}
+        starter_beliefs::Vector{Dict{Symbol, Vector{Any}}} = []
+        for layer in 1:NUM_LAYERS
+            layer_beliefs::Dict{Symbol, Vector{Any}} = Dict()
+            for column in feature_names
+                column_beliefs::Vector{Any} = []
+                for rocktype in 1:length(instances(RockType))
                     if column == :z
                         # Simplifying assumption: z is a linear function of layer with noise
                         shift, scale = (500 * layer, 200 * 200)
                     else
                         shift, scale = PRIOR_BELIEF[(column, RockType(rocktype))]
                     end
-                    layer_beliefs[column] = GP(shift, ScaledKernel(MaternKernel(ν=1.5, metric=ScaledEuclidean()), scale))
+                    push!(column_beliefs, GP(shift, ScaledKernel(MaternKernel(ν=1.5, metric=ScaledEuclidean()), scale)))
                 end
-                push!(rocktype_starter_beliefs, layer_beliefs)
+                layer_beliefs[column] = column_beliefs
             end
-            push!(starter_beliefs, rocktype_starter_beliefs)
+            push!(starter_beliefs, layer_beliefs)
         end
         return starter_beliefs
     end
@@ -170,7 +170,7 @@ end
 
 function observe(pomdp::CCSPOMDP, point::Point, layer::Int, column::Symbol, action_id::Symbol)
     # We return a mixture model of the GP conditioned on the rocktype
-    obs_conditioned_on_rocktype = Vector{MvNormal}(undef, length(instances(RockType))) # TODO: Replace this Any
+    obs_conditioned_on_rocktype = Vector{MvNormal}(undef, length(instances(RockType)))
     x = pcu(point)
     y = pomdp.state.earth[layer].gt[point, column]
     unc = ACTION_UNCERTAINTY[(action_id, column)]
@@ -179,13 +179,13 @@ function observe(pomdp::CCSPOMDP, point::Point, layer::Int, column::Symbol, acti
         if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
             MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
         end
-        f = pomdp.belief[rocktype][layer][column]
+        f = pomdp.belief[layer][column][rocktype]
         if unc < 0 # Feature belief not changed by action
             mean_cond = mean(f(x))
             cov_cond = cov(f(x))
         else
             p_fx = posterior(f(x, unc), y)
-            pomdp.belief[rocktype][layer][column] = p_fx
+            pomdp.belief[layer][column][rocktype] = p_fx
             
             mean_cond = mean(p_fx(x))
             cov_cond = cov(p_fx(x))
@@ -199,7 +199,7 @@ function observe(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol, act
     p1 = geom.vertices[1]
     p2 = geom.vertices[2]
     points = [p1 * (1 - t) + p2 * t for t in range(0, stop=1, length=SEISMIC_N_POINTS)]
-    obs_conditioned_on_rocktype = Vector{MvNormal}(undef, length(instances(RockType))) # TODO: Replace this Any
+    obs_conditioned_on_rocktype = Vector{MvNormal}(undef, length(instances(RockType)))
     x = pcu(points)
     y = [pomdp.state.earth[layer].gt[pt, column][1] for pt in points]
     unc = ACTION_UNCERTAINTY[(action_id, column)]
@@ -208,13 +208,13 @@ function observe(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol, act
         if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
             MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
         end
-        f = pomdp.belief[rocktype][layer][column]
+        f = pomdp.belief[layer][column][rocktype]
         if unc < 0 # Feature belief not changed by action
             mean_cond = mean(f(x))
             cov_cond = cov(f(x))
         else
             p_fx = posterior(f(x, unc), y)
-            pomdp.belief[rocktype][layer][column] = p_fx
+            pomdp.belief[layer][column][rocktype] = p_fx
             
             mean_cond = mean(p_fx(x))
             cov_cond = cov(p_fx(x))
@@ -295,7 +295,7 @@ While this would be more readable as two separate functions, the pattern of inde
 (layer, column, rocktype) is the same for both, so for performance reasons, we combine them.
 
 Information gain is measured as the sum of marginal standard deviations of the GP
-# Eqn for variance ofmixture distribution: https://en.wikipedia.org/wiki/Mixture_distribution
+# Eqn for variance of mixture distribution: https://en.wikipedia.org/wiki/Mixture_distribution
 
 Suitability is measured as the sum of the number of points that we are confident are suitable or unsuitable.
 """
@@ -326,15 +326,12 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
             fill!(var_mtx, 0.0)
             fill!(all_rock_mean, 0.0)
 
-            # This whole loop is information_gain
-            for rocktype in 1:length(instances(RockType))
-                belief_prob = pomdp.rocktype_belief[layer].p[rocktype]
-                if belief_prob == 0.0
-                    continue
-                end
-                fs = marginals(pomdp.belief[rocktype][layer][column](gridx))
-                all_rock_mean .+= mean.(fs) .* belief_prob
-            end
+            # This is information_gain
+            all_rock_mean .= sum(
+                                    mean.(marginals(pomdp.belief[layer][column][rocktype](gridx))) .* 
+                                    pomdp.rocktype_belief[layer].p[rocktype] 
+                                    for rocktype in 1:length(instances(RockType))
+                                )
             
             all_rock_mean .^= 2
             
@@ -346,7 +343,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
                 if belief_prob == 0.0
                     continue
                 end
-                ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
+                ms = marginals(pomdp.belief[layer][column][rocktype](gridx))
                 mg_stds = std.(ms)
                 mg_means = mean.(ms)
 
@@ -380,41 +377,41 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
     return original_uncertainty - layer_col_unc, total_grid_suitability
 end
 
-function reward_suitability(pomdp::CCSPOMDP)
-    total_grid_suitability = 0. # This method stratifies sampling on rock type.
-    for layer in 1:NUM_LAYERS
-        gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)])
-        npts = length(gridx)
-        sample_values = zeros(npts * SUITABILITY_NSAMPLES)
-        prob_mask = zeros(SUITABILITY_NSAMPLES)
-        for column in pomdp.feature_names
-            prev_end = 0
-            for rocktype in 1:length(instances(RockType))
-                belief_prob = pomdp.rocktype_belief[layer].p[rocktype]
-                rocktype_nsamples = Int(floor(belief_prob * SUITABILITY_NSAMPLES))
-                fgrid = pomdp.belief[rocktype][layer][column](gridx)
-                fs = marginals(fgrid)
-                marginal_means = mean.(fs)
-                marginal_stds = std.(fs)
-                norms = [Normal(μ, σ) for (μ, σ) in zip(marginal_means, marginal_stds)]
-                incr = [score_component(column, rand(N)) for N in norms for _ in 1:rocktype_nsamples]
-                sample_values[npts * prev_end + 1: npts * (prev_end + rocktype_nsamples)] .+= incr
-                prob_mask[prev_end + 1:prev_end + rocktype_nsamples] .= rocktype
-                prev_end += rocktype_nsamples
-            end
-        end
-        sample_values ./= length(pomdp.feature_names)
-        sample_matr = reshape(sample_values, length(gridx), SUITABILITY_NSAMPLES)
-        bits_matr = sample_matr .> SUITABILITY_THRESHOLD
-        suitable_pts = (Statistics.mean(bits_matr .* prob_mask', dims=2) .>= SUITABILITY_CONF_THRESHOLD)
-        total_grid_suitability += 1.0 * sum(suitable_pts)
+# function reward_suitability(pomdp::CCSPOMDP)
+#     total_grid_suitability = 0. # This method stratifies sampling on rock type.
+#     for layer in 1:NUM_LAYERS
+#         gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)])
+#         npts = length(gridx)
+#         sample_values = zeros(npts * SUITABILITY_NSAMPLES)
+#         prob_mask = zeros(SUITABILITY_NSAMPLES)
+#         for column in pomdp.feature_names
+#             prev_end = 0
+#             for rocktype in 1:length(instances(RockType))
+#                 belief_prob = pomdp.rocktype_belief[layer].p[rocktype]
+#                 rocktype_nsamples = Int(floor(belief_prob * SUITABILITY_NSAMPLES))
+#                 fgrid = pomdp.belief[layer][column][rocktype](gridx)
+#                 fs = marginals(fgrid)
+#                 marginal_means = mean.(fs)
+#                 marginal_stds = std.(fs)
+#                 norms = [Normal(μ, σ) for (μ, σ) in zip(marginal_means, marginal_stds)]
+#                 incr = [score_component(column, rand(N)) for N in norms for _ in 1:rocktype_nsamples]
+#                 sample_values[npts * prev_end + 1: npts * (prev_end + rocktype_nsamples)] .+= incr
+#                 prob_mask[prev_end + 1:prev_end + rocktype_nsamples] .= rocktype
+#                 prev_end += rocktype_nsamples
+#             end
+#         end
+#         sample_values ./= length(pomdp.feature_names)
+#         sample_matr = reshape(sample_values, length(gridx), SUITABILITY_NSAMPLES)
+#         bits_matr = sample_matr .> SUITABILITY_THRESHOLD
+#         suitable_pts = (Statistics.mean(bits_matr .* prob_mask', dims=2) .>= SUITABILITY_CONF_THRESHOLD)
+#         total_grid_suitability += 1.0 * sum(suitable_pts)
 
-        bits_matr = .!bits_matr
-        unsuitable_pts = (Statistics.mean(bits_matr .* prob_mask', dims=2) .>= SUITABILITY_CONF_THRESHOLD)
-        total_grid_suitability += SUITABILITY_BIAS * sum(unsuitable_pts)
-    end
-    return total_grid_suitability
-end
+#         bits_matr = .!bits_matr
+#         unsuitable_pts = (Statistics.mean(bits_matr .* prob_mask', dims=2) .>= SUITABILITY_CONF_THRESHOLD)
+#         total_grid_suitability += SUITABILITY_BIAS * sum(unsuitable_pts)
+#     end
+#     return total_grid_suitability
+# end
 
 function POMDPs.reward(pomdp::CCSPOMDP, state, action)
     # println("reward $(action.id)")
