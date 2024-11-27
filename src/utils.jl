@@ -32,7 +32,7 @@ function visualize_uncertainty(pomdp::CCSPOMDP, layer::Int, column::Symbol)
         if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
             continue
         end
-        ms = marginals(pomdp.belief[layer][column][rocktype](gridx))
+        ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
         all_rock_mean += mean.(ms) * pomdp.rocktype_belief[layer].p[rocktype]
     end
 
@@ -41,7 +41,7 @@ function visualize_uncertainty(pomdp::CCSPOMDP, layer::Int, column::Symbol)
         if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
             continue
         end
-        ms = marginals(pomdp.belief[layer][column][rocktype](gridx))
+        ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
         mg_stds = std.(ms)
         mg_means = mean.(ms)
         var_compontent = ((mg_stds .^ 2) + (mg_means - all_rock_mean) .^ 2) * pomdp.rocktype_belief[layer].p[rocktype]
@@ -68,7 +68,7 @@ function visualize_uncertainty(pomdp::CCSPOMDP, layer::Int, column::Symbol, supp
         if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
             continue
         end
-        ms = marginals(pomdp.belief[layer][column][rocktype](gridx))
+        ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
         all_rock_mean += mean.(ms) * pomdp.rocktype_belief[layer].p[rocktype]
     end
 
@@ -77,7 +77,7 @@ function visualize_uncertainty(pomdp::CCSPOMDP, layer::Int, column::Symbol, supp
         if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
             continue
         end
-        ms = marginals(pomdp.belief[layer][column][rocktype](gridx))
+        ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
         mg_stds = std.(ms)
         println("Standard deviations of supplementary_points and 3 regular points: ", mg_stds[end - length(supplementary_points) - 3:end])
         mg_means = mean.(ms)

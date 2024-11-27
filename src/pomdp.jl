@@ -70,8 +70,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     state::CCS_State
     feature_names::Vector{Symbol}
     map_uncertainty::Float64 # Some measure of uncertainty over the whole map
-    # order is layer, column, rocktype
-    belief::Vector{Dict{Symbol, Vector{Any}}} # Every layer/feature combo has 3 GPs : for shale, siltstone, sandstone
+    belief::Vector{Vector{Dict{Symbol, Any}}} # Every layer/feature combo has 3 GPs : for shale, siltstone, sandstone
     action_index::Dict
     rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
 
@@ -97,24 +96,24 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
         return randlayers
     end
 
-    function initialize_belief(feature_names::Vector{Symbol})::Vector{Dict{Symbol, Vector{Any}}}
-        starter_beliefs::Vector{Dict{Symbol, Vector{Any}}} = []
-        for layer in 1:NUM_LAYERS
-            layer_beliefs::Dict{Symbol, Vector{Any}} = Dict()
-            for column in feature_names
-                column_beliefs::Vector{Any} = []
-                for rocktype in 1:length(instances(RockType))
+    function initialize_belief(feature_names::Vector{Symbol})::Vector{Vector{Dict}}
+        starter_beliefs::Vector{Vector{Dict}} = []
+        for rocktype in 1:length(instances(RockType))
+            rocktype_starter_beliefs::Vector{Dict} = []
+            for layer in 1:NUM_LAYERS
+                layer_beliefs = Dict()
+                for column in feature_names
                     if column == :z
                         # Simplifying assumption: z is a linear function of layer with noise
                         shift, scale = (500 * layer, 200 * 200)
                     else
                         shift, scale = PRIOR_BELIEF[(column, RockType(rocktype))]
                     end
-                    push!(column_beliefs, GP(shift, ScaledKernel(MaternKernel(ν=1.5, metric=ScaledEuclidean()), scale)))
+                    layer_beliefs[column] = GP(shift, ScaledKernel(MaternKernel(ν=1.5, metric=ScaledEuclidean()), scale))
                 end
-                layer_beliefs[column] = column_beliefs
+                push!(rocktype_starter_beliefs, layer_beliefs)
             end
-            push!(starter_beliefs, layer_beliefs)
+            push!(starter_beliefs, rocktype_starter_beliefs)
         end
         return starter_beliefs
     end
@@ -180,13 +179,13 @@ function observe(pomdp::CCSPOMDP, point::Point, layer::Int, column::Symbol, acti
         if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
             MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
         end
-        f = pomdp.belief[layer][column][rocktype]
+        f = pomdp.belief[rocktype][layer][column]
         if unc < 0 # Feature belief not changed by action
             mean_cond = mean(f(x))
             cov_cond = cov(f(x))
         else
             p_fx = posterior(f(x, unc), y)
-            pomdp.belief[layer][column][rocktype] = p_fx
+            pomdp.belief[rocktype][layer][column] = p_fx
             
             mean_cond = mean(p_fx(x))
             cov_cond = cov(p_fx(x))
@@ -209,13 +208,13 @@ function observe(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol, act
         if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
             MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
         end
-        f = pomdp.belief[layer][column][rocktype]
+        f = pomdp.belief[rocktype][layer][column]
         if unc < 0 # Feature belief not changed by action
             mean_cond = mean(f(x))
             cov_cond = cov(f(x))
         else
             p_fx = posterior(f(x, unc), y)
-            pomdp.belief[layer][column][rocktype] = p_fx
+            pomdp.belief[rocktype][layer][column] = p_fx
             
             mean_cond = mean(p_fx(x))
             cov_cond = cov(p_fx(x))
@@ -329,7 +328,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
 
             # This is information_gain
             all_rock_mean .= sum(
-                                    mean.(marginals(pomdp.belief[layer][column][rocktype](gridx))) .* 
+                                    mean.(marginals(pomdp.belief[rocktype][layer][column](gridx))) .* 
                                     pomdp.rocktype_belief[layer].p[rocktype] 
                                     for rocktype in 1:length(instances(RockType))
                                 )
@@ -342,7 +341,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
                 if belief_prob == 0.0
                     continue
                 end
-                ms = marginals(pomdp.belief[layer][column][rocktype](gridx))
+                ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
                 mg_stds = std.(ms)
                 mg_means = mean.(ms)
 
@@ -388,7 +387,7 @@ end
 #             for rocktype in 1:length(instances(RockType))
 #                 belief_prob = pomdp.rocktype_belief[layer].p[rocktype]
 #                 rocktype_nsamples = Int(floor(belief_prob * SUITABILITY_NSAMPLES))
-#                 fgrid = pomdp.belief[layer][column][rocktype](gridx)
+#                 fgrid = pomdp.belief[rocktype][layer][column](gridx)
 #                 fs = marginals(fgrid)
 #                 marginal_means = mean.(fs)
 #                 marginal_stds = std.(fs)
