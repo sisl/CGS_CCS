@@ -10,6 +10,8 @@ import GLMakie as Mke
 using Infiltrator
 using AbstractGPs
 using Unitful
+using Revise
+using ParticleFilters
 using Plots
 using DataStructures
 @reexport using POMDPs

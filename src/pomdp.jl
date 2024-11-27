@@ -290,31 +290,36 @@ function score_component(feature::Symbol, value)
 end
 
 function calculate_map_uncertainty(pomdp::CCSPOMDP)
-    layer_col_unc::Float64 = 0.0
+    layer_col_unc = 0.0
+    var_mtx = zeros(GRID_SIZE, GRID_SIZE)
+    gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[1].gt)])
+    all_rock_mean = zeros(length(gridx))
+
     for layer in 1:NUM_LAYERS
-        gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[layer].gt)]) 
         for column in pomdp.feature_names
-            var_mtx = zeros(GRID_SIZE, GRID_SIZE)
-            all_rock_mean = zeros(length(gridx))
+            fill!(var_mtx, 0.0)
+            fill!(all_rock_mean, 0.0)
             for rocktype in 1:length(instances(RockType))
-                if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
+                belief_prob = pomdp.rocktype_belief[layer].p[rocktype]
+                if belief_prob == 0.0
                     continue
                 end
                 ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
-                all_rock_mean += mean.(ms) * pomdp.rocktype_belief[layer].p[rocktype]
+                all_rock_mean .+= mean.(ms) * belief_prob
             end
 
             all_rock_mean .^= 2
             # Eqn for mixture distribution: https://en.wikipedia.org/wiki/Mixture_distribution
 
             for rocktype in 1:length(instances(RockType))
-                if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
+                belief_prob = pomdp.rocktype_belief[layer].p[rocktype]
+                if belief_prob == 0.0
                     continue
                 end
                 ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
                 mg_stds = std.(ms)
                 mg_means = mean.(ms)
-                var_compontent = ((mg_stds .^ 2) + (mg_means - all_rock_mean) .^ 2) * pomdp.rocktype_belief[layer].p[rocktype]
+                var_compontent = ((mg_stds .^ 2) .+ (mg_means .- all_rock_mean) .^ 2) .* belief_prob
                 var_mtx .+= reshape(var_compontent, GRID_SIZE, GRID_SIZE)'
             end
             layer_col_unc += sum(sqrt.(var_mtx))
@@ -375,12 +380,18 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action)
     # println("reward $(action.id)")
     action_cost = reward_action_cost(action)
     
-    information_gain = reward_information_gain(pomdp)
+    @time information_gain = reward_information_gain(pomdp)
     
-    suitability = reward_suitability(pomdp)
+    @time suitability = reward_suitability(pomdp)
 
     total_reward = action_cost + λ_1 * information_gain + λ_2 * suitability
     return total_reward
 end
+
+# function POMDPs.gen(pomdp::CCSPOMDP, state, action, rng)
+#     return (sp = pomdp.state,
+#             o = rand(POMDPs.observation(pomdp, action, state)),
+#             r = POMDPs.reward(pomdp, state, action))
+# end
 
 POMDPs.discount(pomdp::CCSPOMDP) = 0.95 

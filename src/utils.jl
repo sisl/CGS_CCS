@@ -128,6 +128,7 @@ function Base.:+(p1::Point, p2::Point)
     Point(p1.coords.x + p2.coords.x, p1.coords.y + p2.coords.y)
 end
 
-function Base.:-(p1::Point, p2::Point) # Minus between points returns distance
-    √((p1.coords.x - p2.coords.x) ^ 2 + (p1.coords.y - p2.coords.y) ^ 2)
-end
+# Do not use, causes problems with precompiling
+# function Base.:-(p1::Point, p2::Point) # Minus between points returns distance
+#     √((p1.coords.x - p2.coords.x) ^ 2 + (p1.coords.y - p2.coords.y) ^ 2)
+# end
