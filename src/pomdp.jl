@@ -326,12 +326,13 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
             fill!(scaled_var_mtx, 0.0)
             fill!(all_rock_mean, 0.0)
 
-            # This is information_gain
-            all_rock_mean .= sum(
-                                    mean.(marginals(pomdp.belief[rocktype][layer][column](gridx))) .* 
-                                    pomdp.rocktype_belief[layer].p[rocktype] 
-                                    for rocktype in 1:length(instances(RockType))
-                                )
+            for rocktype in 1:length(instances(RockType))
+                belief_prob = pomdp.rocktype_belief[layer].p[rocktype]
+                if belief_prob == 0.0
+                    continue
+                end
+                all_rock_mean .+= mean.(marginals(pomdp.belief[rocktype][layer][column](gridx))) .* belief_prob
+            end
             
             # suitability
             prev_end = 0
@@ -415,16 +416,20 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action)
     # println("reward $(action.id)")
     action_cost = reward_action_cost(action)
     
-    @time information_gain, suitability = reward_information_gain_suitability(pomdp)
+    information_gain, suitability = reward_information_gain_suitability(pomdp)
 
     total_reward = action_cost + λ_1 * information_gain + λ_2 * suitability
     return total_reward
 end
 
-# function POMDPs.gen(pomdp::CCSPOMDP, state, action, rng)
-#     return (sp = pomdp.state,
-#             o = rand(POMDPs.observation(pomdp, action, state)),
-#             r = POMDPs.reward(pomdp, state, action))
-# end
+function POMDPs.gen(pomdp::CCSPOMDP, state, action, rng)
+    println("Observation: ")
+    @time oc = rand(POMDPs.observation(pomdp, action, state))
+    println("Reward: ")
+    @time rew = POMDPs.reward(pomdp, state, action)
+    return (sp = pomdp.state,
+            o = oc,
+            r = rew)
+end
 
 POMDPs.discount(pomdp::CCSPOMDP) = 0.95 
