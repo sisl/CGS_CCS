@@ -1,0 +1,30 @@
+using Pkg
+
+dependencies = ["AbstractGPs",
+                "AbstractGPsMakie",
+                "CairoMakie",
+                "DataFrames",
+                "DataStructures",
+                "Distributions",
+                "GLMakie",
+                "GeoTables",
+                # "GeoStats",
+                # "GeoStatsFunctions",
+                # "GeoStatsProcesses",
+                "Meshes",
+                "POMDPModelTools",
+                "Infiltrator",
+                "LinearAlgebra",
+                "POMCPOW",
+                "POMDPModels",
+                "POMDPPolicies",
+                "POMDPSimulators",
+                "POMDPs",
+                "ParticleFilters",
+                "Plots",
+                "Random",
+                "Reexport",
+                "Statistics",
+                "Unitful"]
+
+Pkg.add(dependencies)
