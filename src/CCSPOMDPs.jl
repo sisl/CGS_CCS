@@ -26,6 +26,7 @@ export
     CCS_State,
     CCSPOMDP,
     reward_action_cost,
+    SPACING,
     visualize_gt,
     visualize_uncertainty
 

@@ -123,13 +123,7 @@ POMDPs.states(pomdp::CCSPOMDP) = [pomdp.state, pomdp.terminal_state]
 
 POMDPs.initialstate(pomdp::CCSPOMDP) = SparseCat([pomdp.state], [1.0])
 
-function POMDPs.stateindex(pomdp::CCSPOMDP, state::CCS_State)
-    if length(pomdp.state.earth) > 0
-        return 1
-    else
-        return 2
-    end
-end
+POMDPs.stateindex(pomdp::CCSPOMDP, state::CCS_State) = length(pomdp.state.earth) > 0 ? 1 : 2
 
 function POMDPs.transition(pomdp::CCSPOMDP, state, action)
     if action.id == :terminate_action
