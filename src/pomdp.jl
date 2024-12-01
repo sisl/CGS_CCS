@@ -1,9 +1,7 @@
 include("mesh_utils.jl")
 
-struct GeoFeatures
-    name::Symbol
-    mean::Number
-end
+GRID = CartesianGrid((GRID_SIZE, GRID_SIZE), (0., 0.), (SPACING, SPACING))
+GRIDX = pcu([pt.vertices[1] for pt in GRID])
 
 """
 LayerFeatures struct
@@ -15,24 +13,17 @@ struct LayerFeatures
     gt::GeoTable
     df::DataFrame
     layer_rocktype::RockType
-    function LayerFeatures(feats::Vector{GeoFeatures}, beliefs::Vector{Vector{Dict}}, layer::Int)
+    function LayerFeatures(feats::Vector{Symbol}, beliefs, layer::Int)
         layer_rtype = Base.rand(1:3)
-        grid = CartesianGrid((GRID_SIZE, GRID_SIZE), (0., 0.), (SPACING, SPACING))
-        gridx = pcu([pt.vertices[1] for pt in grid])
         dfs::Vector{DataFrame} = []
         for feat in feats
-            f = beliefs[layer_rtype][layer][feat.name]
-            rand(f(pcu(gridx)))
-            
-            range, sill, nugget = VARIOGRAM_HYPERPARAMS[feat.name][layer_rtype]
-            proc = GaussianProcess(SphericalVariogram(range=range, sill=sill, nugget=nugget), feat.mean)
-            simul = GeoStats.rand(proc, grid, [feat.name => Float64], 1)[1]
-            feat_dataframe = DataFrame(simul)
-            select!(feat_dataframe, Not(:geometry))
-            push!(dfs, feat_dataframe)
+            f = beliefs[layer_rtype][layer][feat]
+            simul = rand(f(GRIDX))
+            df = DataFrame(feat => simul)
+            push!(dfs, df)
         end
         all_feature_df = hcat(dfs...)
-        all_feature_gt = georef(all_feature_df, grid)
+        all_feature_gt = georef(all_feature_df, GRID)
         
         return new(all_feature_gt, all_feature_df, RockType(layer_rtype))
     end
@@ -57,7 +48,7 @@ end
     # @boundscheck if length(a) != length(b)
     #     throw(DimensionMismatch("first array has length $(length(a)) which does not match the length of the second, $(length(b))."))
     # end
-    ans = sqrt(sum((a .- b) .^ 2)) / 300
+    ans = sqrt(sum((a .- b) .^ 2)) / 200
     # if Base.rand(1:300) == 77
     #     println("Dist betweeen $a and $b is $ans")
     # end
@@ -67,10 +58,8 @@ end
 @inline (dist::ScaledEuclidean)(a::AbstractArray,b::AbstractArray) = Distances._evaluate(dist,a,b)
 @inline (dist::ScaledEuclidean)(a::Number, b::Number) = begin
     # println("Dist betweeen $a and $b is $(Euclidean()(a, b))") # Always checks between 1.0 and 1.0 for some reason
-    Euclidean()(a, b) / 300
+    Euclidean()(a, b) / 200
 end
-
-
 
 mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Geometry}, Any}
     state::CCS_State
@@ -81,27 +70,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
     terminal_state::CCS_State
 
-    function initialize_earth(beliefs::Vector{Vector{Dict}})::Vector{LayerFeatures} # TODO: make this vary by rock type and more specific RANGE/SILL/NUGGET
-        randlayers::Vector{LayerFeatures} = []
-        prev_mean = 0.
-        for layer in 1:NUM_LAYERS
-            layer_params::Vector{GeoFeatures} = []
-            if layer == 1
-                push!(layer_params, GeoFeatures(:z, 0.))
-            else
-                prev_mean += Base.rand(300:800)
-                push!(layer_params, GeoFeatures(:z, prev_mean))
-            end
-            
-            λ = 100
-            push!(layer_params, GeoFeatures(:permeability, Base.rand(Exponential(λ))))
-            
-            push!(layer_params, GeoFeatures(:topSealThickness, Base.rand(10:80)))
-
-            push!(randlayers, LayerFeatures(layer_params, beliefs, layer))
-        end
-        return randlayers
-    end
+    initialize_earth(beliefs, feat_names) = @showprogress desc="Initializing GT (May take ~5 mins)" [LayerFeatures(feat_names, beliefs, layer) for layer in 1:NUM_LAYERS]
 
     function initialize_belief(feature_names::Vector{Symbol})::Vector{Vector{Dict}}
         starter_beliefs::Vector{Vector{Dict}} = []
@@ -135,12 +104,12 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
         wells = [Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
         Base.rand(0.0:float(GRID_SIZE * SPACING))) for _ in 1:NUM_WELLS]
         gps = initialize_belief(feature_names)
-        earth = initialize_earth(gps)
+        earth = initialize_earth(gps, feature_names)
         rtype_belief = [Distributions.Categorical(3) for _ in 1:NUM_LAYERS]
         return new(CCS_State(earth, lines, wells), 
                     feature_names, 
                     -1.0, # signals unknown map uncertainty
-                    gps, 
+                    gps,
                     Dict(), # TODO: Initialize action and actionindex here!
                     rtype_belief,
                     CCS_State(Vector{LayerFeatures}(), Vector{Segment}(), Vector{Point}())
@@ -152,7 +121,7 @@ include("vis_utils.jl")
 
 POMDPs.states(pomdp::CCSPOMDP) = [pomdp.state, pomdp.terminal_state]
 
-POMDPs.initialstate(pomdp::CCSPOMDP) = Deterministic(pomdp.state)
+POMDPs.initialstate(pomdp::CCSPOMDP) = SparseCat([pomdp.state], [1.0])
 
 function POMDPs.stateindex(pomdp::CCSPOMDP, state::CCS_State)
     if length(pomdp.state.earth) > 0
@@ -164,9 +133,9 @@ end
 
 function POMDPs.transition(pomdp::CCSPOMDP, state, action)
     if action.id == :terminate_action
-        return Deterministic(pomdp.terminal_state)
+        return SparseCat([pomdp.terminal_state], [1.0])
     else
-        return Deterministic(pomdp.state)
+        return SparseCat([pomdp.state], [1.0])
     end
 end
 
@@ -325,8 +294,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
     original_uncertainty::Float64 = pomdp.map_uncertainty
     
     # Both info and suitability
-    gridx = pcu([pt.vertices[1] for pt in domain(pomdp.state.earth[1].gt)])
-    npts = length(gridx)
+    npts = length(GRIDX)
 
     # information_gain
     layer_col_unc = 0.0
@@ -353,7 +321,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
                 if belief_prob == 0.0
                     continue
                 end
-                all_rock_mean .+= mean.(marginals(pomdp.belief[rocktype][layer][column](gridx))) .* belief_prob
+                all_rock_mean .+= mean.(marginals(pomdp.belief[rocktype][layer][column](GRIDX))) .* belief_prob
             end
             
             # suitability
@@ -364,7 +332,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
                 if belief_prob == 0.0
                     continue
                 end
-                ms = marginals(pomdp.belief[rocktype][layer][column](gridx))
+                ms = marginals(pomdp.belief[rocktype][layer][column](GRIDX))
                 mg_stds = std.(ms)
                 mg_means = mean.(ms)
 

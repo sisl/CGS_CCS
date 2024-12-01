@@ -1,26 +1,4 @@
 """
-Deterministic distribution for initialstate and transition models
-"""
-struct Deterministic{T} <: Distributions.DiscreteUnivariateDistribution
-    value::T
-end
-
-Statistics.mean(d::Deterministic) = d.value
-Statistics.var(d::Deterministic) = 0.0
-Distributions.rand(d::Deterministic) = d.value
-
-Distributions.pdf(d::Deterministic, x) = x == d.value ? 1.0 : 0.0
-Distributions.cdf(d::Deterministic, x) = x < d.value ? 0.0 : 1.0
-
-Distributions.support(d::Deterministic) = [d.value]
-
-Base.iterate(d::Deterministic, state=nothing) = state === nothing ? (d.value, true) : nothing
-Base.show(io::IO, d::Deterministic) = print(io, "Deterministic(value=$(d.value))")
-
-Distributions.quantile(d::Deterministic, p::Real) = d.value # Not sure about this
-
-# Geostats to vector utility fns
-"""
 Point Conversion Utility (pcu)
 Take a 2D Point from GeoStats.jl and convert it into a 
 1 element vector of vector of 2 coordinates that is easily fed into a GP from

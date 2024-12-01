@@ -3,14 +3,16 @@ module CCSPOMDPs
 using Reexport
 using Distributions
 using Statistics
-using GeoStats
 using Random
 using DataFrames
+using Meshes
+using GeoTables
 import GLMakie as Mke
 using Infiltrator
 using AbstractGPs
 using Unitful
-using Revise
+using Distances
+using ProgressMeter
 using ParticleFilters
 using Plots
 using DataStructures
@@ -23,6 +25,7 @@ export
     LayerFeatures,
     CCS_State,
     CCSPOMDP,
+    reward_action_cost,
     visualize_gt,
     visualize_uncertainty
 
