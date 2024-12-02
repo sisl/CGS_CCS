@@ -29,6 +29,7 @@ export
     CCSPOMDP,
     reward_action_cost,
     SPACING,
+    GRID_SIZE,
     visualize_gt,
     visualize_uncertainty
 

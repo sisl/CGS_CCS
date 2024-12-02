@@ -48,7 +48,7 @@ end
     # @boundscheck if length(a) != length(b)
     #     throw(DimensionMismatch("first array has length $(length(a)) which does not match the length of the second, $(length(b))."))
     # end
-    ans = sqrt(sum((a .- b) .^ 2)) / 200
+    ans = sqrt(sum((a .- b) .^ 2)) / 5 * SPACING
     # if Base.rand(1:300) == 77
     #     println("Dist betweeen $a and $b is $ans")
     # end
@@ -58,7 +58,7 @@ end
 @inline (dist::ScaledEuclidean)(a::AbstractArray,b::AbstractArray) = Distances._evaluate(dist,a,b)
 @inline (dist::ScaledEuclidean)(a::Number, b::Number) = begin
     # println("Dist betweeen $a and $b is $(Euclidean()(a, b))") # Always checks between 1.0 and 1.0 for some reason
-    Euclidean()(a, b) / 200
+    Euclidean()(a, b) / 5 * SPACING
 end
 
 mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Geometry}, Any}
@@ -70,7 +70,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
     terminal_state::CCS_State
 
-    initialize_earth(beliefs, feat_names) = @showprogress desc="Initializing GT (May take ~6 mins)" [LayerFeatures(feat_names, beliefs, layer) for layer in 1:NUM_LAYERS]
+    initialize_earth(beliefs, feat_names) = @showprogress desc="Initializing GT (May take up to 10 mins)" [LayerFeatures(feat_names, beliefs, layer) for layer in 1:NUM_LAYERS]
 
     function initialize_belief(feature_names::Vector{Symbol})::Vector{Vector{Dict}}
         starter_beliefs::Vector{Vector{Dict}} = []
@@ -94,25 +94,24 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
         return starter_beliefs
     end
 
-    function CCSPOMDP(load_cached::Bool = false)
-        cache_file = "../src/cache/pomdp.jld2"
-
-        if load_cached && isfile(cache_file)
-            println("Loading from cache...")
-            return JLD2.load(cache_file, "pomdp")
-        end
-
+    function CCSPOMDP(load_cached::Bool = true, cache_file::String = "src/cache/pomdp_earth.jld2")
+        
         feature_names = [:z, :permeability, :topSealThickness]
         lines = [Segment(Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
-                                Base.rand(0.0:float(GRID_SIZE * SPACING))), 
-                                Point(Base.rand(0.0:float(GRID_SIZE * SPACING)),
-                                Base.rand(0.0:float(GRID_SIZE * SPACING))))
-                        for _ in 1:NUM_LINES]
+        Base.rand(0.0:float(GRID_SIZE * SPACING))), 
+        Point(Base.rand(0.0:float(GRID_SIZE * SPACING)),
+        Base.rand(0.0:float(GRID_SIZE * SPACING))))
+        for _ in 1:NUM_LINES]
         wells = [Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
-                        Base.rand(0.0:float(GRID_SIZE * SPACING))) for _ in 1:NUM_WELLS]
+        Base.rand(0.0:float(GRID_SIZE * SPACING))) for _ in 1:NUM_WELLS]
         
         gps = initialize_belief(feature_names)
-        earth = initialize_earth(gps, feature_names)
+        if load_cached && isfile(cache_file)
+            earth = JLD2.load(cache_file, "earth")
+        else
+            earth = initialize_earth(gps, feature_names)
+            jldsave(cache_file; earth)
+        end
         rtype_belief = [Distributions.Categorical(3) for _ in 1:NUM_LAYERS]
         
         pomdp = new(CCS_State(earth, lines, wells), 
@@ -123,10 +122,6 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
                         rtype_belief,
                         CCS_State(Vector{LayerFeatures}(), Vector{Segment}(), Vector{Point}())
                         )
-
-        # Save to cache
-        println("Saving to cache...")
-        jldsave(cache_file; pomdp)
 
         return pomdp
     end
@@ -289,6 +284,18 @@ function score_component(feature::Symbol, value)
     end
 end
 
+function mean_and_var(f, x)
+    C_xcond_x = cov(f.prior, f.data.x, x)
+    m_post = mean(f.prior, x) + C_xcond_x' * f.data.α
+    C_post_diag = var(f.prior, x) - vec(sum(abs2, f.data.C.U' \ C_xcond_x; dims=1))
+    return (m_post, C_post_diag)
+end
+
+function my_marginals(f, x)
+    m, c = mean_and_var(f, x)
+    return Normal.(m, sqrt.(c))
+end
+
 """
 Computes the information gain and suitability reward components
 While this would be more readable as two separate functions, the pattern of indexing
@@ -330,9 +337,10 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
                 if belief_prob == 0.0
                     continue
                 end
-                all_rock_mean .+= mean.(marginals(pomdp.belief[rocktype][layer][column](GRIDX))) .* belief_prob
+                all_rock_mean .+= mean(pomdp.belief[rocktype][layer][column], GRIDX) .* belief_prob
             end
             
+            all_rock_mean ./= 2.
             # suitability
             prev_end = 0
             for rocktype in 1:length(instances(RockType))
@@ -341,9 +349,16 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
                 if belief_prob == 0.0
                     continue
                 end
-                ms = marginals(pomdp.belief[rocktype][layer][column](GRIDX))
+                println("og ms computation")
+                @time ms = marginals(pomdp.belief[rocktype][layer][column](GRIDX))
+                println("my ms computation")
+                @time my_ms = my_marginals(pomdp.belief[rocktype][layer][column], GRIDX)
                 mg_stds = std.(ms)
+                my_mg_stds = std.(my_ms)
                 mg_means = mean.(ms)
+                my_mg_means = mean.(my_ms)
+                @assert mg_stds ≈ my_mg_stds
+                @assert mg_means ≈ my_mg_means
 
                 # information gain
                 var_compontent = ((mg_stds .^ 2) .+ (mg_means .- all_rock_mean) .^ 2) .* belief_prob
@@ -385,14 +400,14 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action)
     return total_reward
 end
 
-function POMDPs.gen(pomdp::CCSPOMDP, state, action, rng)
-    println("Observation: ")
-    @time oc = rand(POMDPs.observation(pomdp, action, state))
-    println("Reward: ")
-    @time rew = POMDPs.reward(pomdp, state, action)
-    return (sp = pomdp.state,
-            o = oc,
-            r = rew)
-end
+# function POMDPs.gen(pomdp::CCSPOMDP, state, action, rng)
+#     println("Observation: ")
+#     @time oc = rand(POMDPs.observation(pomdp, action, state))
+#     println("Reward: ")
+#     @time rew = POMDPs.reward(pomdp, state, action)
+#     return (sp = pomdp.state,
+#             o = oc,
+#             r = rew)
+# end
 
 POMDPs.discount(pomdp::CCSPOMDP) = 0.95 
