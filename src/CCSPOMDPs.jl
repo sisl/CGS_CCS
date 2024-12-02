@@ -13,7 +13,9 @@ using AbstractGPs
 using Unitful
 using Distances
 using ProgressMeter
+using JLD2
 using ParticleFilters
+using POMDPModelTools
 using Plots
 using DataStructures
 @reexport using POMDPs

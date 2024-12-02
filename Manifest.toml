@@ -2,7 +2,7 @@
 
 julia_version = "1.11.0"
 manifest_format = "2.0"
-project_hash = "f41b27f0da536b409dfe8ec9171a62231f836658"
+project_hash = "7578adb924ff8284440836798da69908d330c2ad"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -138,6 +138,12 @@ deps = ["CPUTime", "Colors", "D3Trees", "MCTS", "POMDPLinter", "POMDPTools", "PO
 git-tree-sha1 = "6bd8e6c1eb1c9fe993907c6eb1e9df02b8b23b04"
 uuid = "d721219e-3fc6-5570-a8ef-e5402f47c49e"
 version = "0.3.11"
+
+[[deps.BeliefUpdaters]]
+deps = ["POMDPTools", "POMDPs", "Random", "Statistics", "StatsBase"]
+git-tree-sha1 = "8819a9a0e9e9002125ae55626e10f0c210959c30"
+uuid = "8bb6e9a1-7d73-552c-a44a-e5dc5634aac4"
+version = "0.2.3"
 
 [[deps.Bessels]]
 git-tree-sha1 = "4435559dc39793d53a9e3d278e185e920b4619ef"
@@ -969,6 +975,12 @@ version = "1.10.0"
 git-tree-sha1 = "a3f24677c21f5bbe9d2a714f95dcd58337fb2856"
 uuid = "82899510-4779-5014-852e-03e436cf321d"
 version = "1.0.0"
+
+[[deps.JLD2]]
+deps = ["FileIO", "MacroTools", "Mmap", "OrderedCollections", "PrecompileTools", "Requires", "TranscodingStreams"]
+git-tree-sha1 = "f1a1c1037af2a4541ea186b26b0c0e7eeaad232b"
+uuid = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+version = "0.5.10"
 
 [[deps.JLFzf]]
 deps = ["Pipe", "REPL", "Random", "fzf_jll"]

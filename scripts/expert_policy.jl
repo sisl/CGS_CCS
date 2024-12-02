@@ -5,16 +5,15 @@ using POMDPPolicies
 using POMDPModelTools
 using POMDPSimulators
 using Meshes
-
+using BeliefUpdaters
 
 struct GridCell
     region::Box
     probability::Float64
 end
 
-println("$(CCSPOMDPs.SPACING)")
 
-struct CGSExpertPolicy{P<:POMDP} <: Policy
+mutable struct CGSExpertPolicy{P<:POMDP} <: Policy
     pomdp::P
     grid::Vector{GridCell}
     all_actions::Set
@@ -27,7 +26,7 @@ struct CGSExpertPolicy{P<:POMDP} <: Policy
         grid_size = 10
         for i in 0:grid_size - 1
             for j in 0:grid_size - 1
-                region = Box((i * SPACING, j * SPACING), ((i + 1) * CCSPOMDPs.SPACING, (j + 1) * CCSPOMDPs.SPACING))
+                region = Box((i * CCSPOMDPs.SPACING, j * CCSPOMDPs.SPACING), ((i + 1) * CCSPOMDPs.SPACING, (j + 1) * CCSPOMDPs.SPACING))
                 probability = 1.0
                 push!(grid, GridCell(region, probability))
             end
@@ -52,7 +51,7 @@ pomdp = CCSPOMDPs.CCSPOMDP()
 
 expert_pol = CGSExpertPolicy(pomdp);
 
-rollout_sim = RolloutSimulator(max_steps=1);
-expert_reward = simulate(rollout_sim, pomdp, expert_pol, DiscreteUpdater(pomdp));
+rollout_sim = RolloutSimulator(max_steps=10);
+expert_reward = simulate(rollout_sim, pomdp, expert_pol, NothingUpdater())
 
 @show expert_reward;

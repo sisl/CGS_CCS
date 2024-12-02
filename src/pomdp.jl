@@ -70,7 +70,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
     terminal_state::CCS_State
 
-    initialize_earth(beliefs, feat_names) = @showprogress desc="Initializing GT (May take ~5 mins)" [LayerFeatures(feat_names, beliefs, layer) for layer in 1:NUM_LAYERS]
+    initialize_earth(beliefs, feat_names) = @showprogress desc="Initializing GT (May take ~6 mins)" [LayerFeatures(feat_names, beliefs, layer) for layer in 1:NUM_LAYERS]
 
     function initialize_belief(feature_names::Vector{Symbol})::Vector{Vector{Dict}}
         starter_beliefs::Vector{Vector{Dict}} = []
@@ -94,42 +94,57 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
         return starter_beliefs
     end
 
-    function CCSPOMDP()
+    function CCSPOMDP(load_cached::Bool = false)
+        cache_file = "../src/cache/pomdp.jld2"
+
+        if load_cached && isfile(cache_file)
+            println("Loading from cache...")
+            return JLD2.load(cache_file, "pomdp")
+        end
+
         feature_names = [:z, :permeability, :topSealThickness]
         lines = [Segment(Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
-        Base.rand(0.0:float(GRID_SIZE * SPACING))), 
-        Point(Base.rand(0.0:float(GRID_SIZE * SPACING)),
-        Base.rand(0.0:float(GRID_SIZE * SPACING))))
-        for _ in 1:NUM_LINES]
+                                Base.rand(0.0:float(GRID_SIZE * SPACING))), 
+                                Point(Base.rand(0.0:float(GRID_SIZE * SPACING)),
+                                Base.rand(0.0:float(GRID_SIZE * SPACING))))
+                        for _ in 1:NUM_LINES]
         wells = [Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
-        Base.rand(0.0:float(GRID_SIZE * SPACING))) for _ in 1:NUM_WELLS]
+                        Base.rand(0.0:float(GRID_SIZE * SPACING))) for _ in 1:NUM_WELLS]
+        
         gps = initialize_belief(feature_names)
         earth = initialize_earth(gps, feature_names)
         rtype_belief = [Distributions.Categorical(3) for _ in 1:NUM_LAYERS]
-        return new(CCS_State(earth, lines, wells), 
-                    feature_names, 
-                    -1.0, # signals unknown map uncertainty
-                    gps,
-                    Dict(), # TODO: Initialize action and actionindex here!
-                    rtype_belief,
-                    CCS_State(Vector{LayerFeatures}(), Vector{Segment}(), Vector{Point}())
-                    )
-    end
-end
+        
+        pomdp = new(CCS_State(earth, lines, wells), 
+                        feature_names, 
+                        -1.0, # signals unknown map uncertainty
+                        gps,
+                        Dict(), # TODO: Initialize action and actionindex here!
+                        rtype_belief,
+                        CCS_State(Vector{LayerFeatures}(), Vector{Segment}(), Vector{Point}())
+                        )
 
+        # Save to cache
+        println("Saving to cache...")
+        jldsave(cache_file; pomdp)
+
+        return pomdp
+    end
+
+end
 include("vis_utils.jl")
 
 POMDPs.states(pomdp::CCSPOMDP) = [pomdp.state, pomdp.terminal_state]
 
-POMDPs.initialstate(pomdp::CCSPOMDP) = SparseCat([pomdp.state], [1.0])
+POMDPs.initialstate(pomdp::CCSPOMDP) = SparseCat([pomdp.state, pomdp.terminal_state], [1.0, 0.0])
 
 POMDPs.stateindex(pomdp::CCSPOMDP, state::CCS_State) = length(pomdp.state.earth) > 0 ? 1 : 2
 
 function POMDPs.transition(pomdp::CCSPOMDP, state, action)
     if action.id == :terminate_action
-        return SparseCat([pomdp.terminal_state], [1.0])
+        return SparseCat([pomdp.state, pomdp.terminal_state], [0.0, 1.0])
     else
-        return SparseCat([pomdp.state], [1.0])
+        return SparseCat([pomdp.state, pomdp.terminal_state], [1.0, 0.0])
     end
 end
 
@@ -346,7 +361,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
         end
         # suitability
         sample_values ./= length(pomdp.feature_names)
-        sample_matr = reshape(sample_values, length(gridx), SUITABILITY_NSAMPLES)
+        sample_matr = reshape(sample_values, length(GRIDX), SUITABILITY_NSAMPLES)
         bits_matr = sample_matr .> SUITABILITY_THRESHOLD
         suitable_pts = (Statistics.mean(bits_matr .* prob_mask', dims=2) .>= SUITABILITY_CONF_THRESHOLD)
         total_grid_suitability += sum(suitable_pts)
