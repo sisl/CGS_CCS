@@ -95,8 +95,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     end
 
     function CCSPOMDP()
-        
-        feature_names = [:z, :permeability, :topSealThickness]
+        feature_names = FEATURE_NAMES
         lines = [Segment(Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
         Base.rand(0.0:float(GRID_SIZE * SPACING))), 
         Point(Base.rand(0.0:float(GRID_SIZE * SPACING)),
@@ -276,6 +275,40 @@ function score_component(feature::Symbol, value)
             return 4
         else
             return 2
+        end
+    elseif feature == :injectivity
+        if value < 0.25
+            return 0
+        elseif value < 0.5
+            return 1
+        elseif value < 1
+            return 2
+        elseif value < 1.5
+            return 3
+        elseif value < 2
+            return 4
+        else
+            return 5
+        end
+    elseif feature == :salinity # recall ppm * 1000
+        if value < 10
+            return 0
+        elseif value < 30
+            return 2
+        elseif value < 50
+            return 5
+        elseif value < 100
+            return 4
+        elseif value < 200
+            return 3
+        else
+            return 1
+        end
+    elseif feature == :bottomSeal
+        if value < 0.1
+            return 1
+        else
+            return 5
         end
     end
 end

@@ -9,6 +9,15 @@ const SEISMIC_N_POINTS = 15
 
 @enum RockType SANDSTONE=1 SILTSTONE=2 SHALE=3
 
+FEATURE_NAMES = [
+    :permeability,
+    :topSealThickness,
+    :z,
+    :bottomSeal,
+    :injectivity,
+    :salinity
+]
+
 # Belief Initialization
 PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
     # For permeability, log transform: Actual Sandstone range is 10 - 200,
@@ -31,6 +40,20 @@ PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
     (:z, SANDSTONE) => (500, 200 * 200), # meters
     (:z, SILTSTONE) => (500, 200 * 200), # meters
     (:z, SHALE) => (500, 200 * 200), # meters
+
+    # independent of rock type
+    (:bottomSeal, SANDSTONE) => (0, 1),
+    (:bottomSeal, SILTSTONE) => (0, 1),
+    (:bottomSeal, SHALE) => (0, 1),
+
+    (:injectivity, SANDSTONE) => (1, 1), # MtCO2/year
+    (:injectivity, SILTSTONE) => (0, 0.1),
+    (:injectivity, SHALE) => (0, 0.1),
+
+    # again independent of rock type
+    (:salinity, SANDSTONE) => (60, 20 ^ 2), # ppm * 1000
+    (:salinity, SILTSTONE) => (80, 50 ^ 2),
+    (:salinity, SHALE) => (25, 11 ^ 2),
 )
 
 # Action costs
@@ -58,35 +81,14 @@ const λ_2 = 1e-4
 # Sampling plans in optimization textbook
 a_u = Dict(
     (:well_action, :z) => 9, # within 3 m
-    (:well_action, :permeability) => .05 * 0.05, # miniDarcy log transform
+    (:well_action, :permeability) => .05 ^ 2, # miniDarcy log transform
     (:well_action, :topSealThickness) => 4, # std 2 m
+    (:well_action, :injectivity) => 0.05 ^ 2, # within .05 MtCO2/year
+    (:well_action, :salinity) => 0.01 ^ 2, # within 1% ppm 
 
     (:seismic_action, :z) => 100, # within 10 m
     (:seismic_action, :topSealThickness) => 400, # within 20 m
+    (:seismic_action, :bottomSeal) => 0.15 ^ 2, # within 0.1
 )
 
 ACTION_UNCERTAINTY = DefaultDict(-1., a_u)
-
-# Variogram hyperparams
-# Variogram hyperparams for permeability, for each rock type
-# Rock type ordering is same as enum, Sandstone, Siltstone, Shale
-const PERMEABILITY_NUGGET = 0.1, 0.05, 0.05 # (log(mD))
-const PERMEABILITY_SILL = 2.0, 0.5, 0.5 # (log(mD))
-const PERMEABILITY_RANGE = 1000, 500, 300 # meters
-
-# Variogram hyperparams for topSealThickness, for each rock type
-# Note all the values are the same because the topseal is independent of rock type
-const TOPSEAL_NUGGET = 2, 2, 2 # meters
-const TOPSEAL_SILL = 500, 500, 500 # meters
-const TOPSEAL_RANGE = 2000, 2000, 2000 # meters
-
-# Variogram hyperparams for z, for each rock type
-const Z_NUGGET = 2, 2, 2 # meters
-const Z_SILL = 50, 50, 50 # meters
-const Z_RANGE = 1500, 1500, 1500 # meters
-
-VARIOGRAM_HYPERPARAMS = Dict(
-    :permeability => (PERMEABILITY_NUGGET, PERMEABILITY_SILL, PERMEABILITY_RANGE),
-    :topSealThickness => (TOPSEAL_NUGGET, TOPSEAL_SILL, TOPSEAL_RANGE),
-    :z => (Z_NUGGET, Z_SILL, Z_RANGE)
-)
