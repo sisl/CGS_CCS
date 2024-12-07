@@ -13,10 +13,7 @@ you think would help determine suitability, you can add it with the following st
 1. In `src/config.jl` add a prior belief of your variable's value `:featureName => (mean, variance)` to the `PRIOR_BELIEF` dictionary
 2. In `src/config.jl` add action uncertainties to the `a_u` dictionary `(:action_type, :featureName) => variance`
     - This means that an action of `:action_type` can inform us of the value of `:featureName` with `variance`
-3. Modify the `initialize_earth()` and `CCSPOMDP()` functions to include your feature
-    - `initialize_earth()` will require you to write some random initialization for the value of the feature
-    - Modify the constructor by just adding the feature name to the `feature_names` vector
-4. Include logic on how your feature is to be scored in the `score_component` function, which returns a value 1 - 5
+3. Include logic on how your feature is to be scored in the `score_component` function, which returns a value 1 - 5
 
 ## Planning Links:
 
