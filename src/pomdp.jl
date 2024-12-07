@@ -48,8 +48,8 @@ end
     # @boundscheck if length(a) != length(b)
     #     throw(DimensionMismatch("first array has length $(length(a)) which does not match the length of the second, $(length(b))."))
     # end
-    ans = sqrt(sum((a .- b) .^ 2)) / 5 * SPACING
-    # if Base.rand(1:300) == 77
+    ans = sqrt(sum(((a ./ SPACING) .- (b ./ SPACING)) .^ 2))
+    # if Base.rand(1:2500000) == 42
     #     println("Dist betweeen $a and $b is $ans")
     # end
     return ans
@@ -58,7 +58,7 @@ end
 @inline (dist::ScaledEuclidean)(a::AbstractArray,b::AbstractArray) = Distances._evaluate(dist,a,b)
 @inline (dist::ScaledEuclidean)(a::Number, b::Number) = begin
     # println("Dist betweeen $a and $b is $(Euclidean()(a, b))") # Always checks between 1.0 and 1.0 for some reason
-    Euclidean()(a, b) / 5 * SPACING
+    Euclidean()(a / SPACING, b / SPACING)
 end
 
 mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Geometry}, Any}
@@ -70,7 +70,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
     terminal_state::CCS_State
 
-    initialize_earth(beliefs, feat_names) = @showprogress desc="Initializing GT (May take up to 10 mins)" [LayerFeatures(feat_names, beliefs, layer) for layer in 1:NUM_LAYERS]
+    initialize_earth(beliefs, feat_names) = [LayerFeatures(feat_names, beliefs, layer) for layer in 1:NUM_LAYERS]
 
     function initialize_belief(feature_names::Vector{Symbol})::Vector{Vector{Dict}}
         starter_beliefs::Vector{Vector{Dict}} = []
@@ -85,7 +85,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
                     else
                         shift, scale = PRIOR_BELIEF[(column, RockType(rocktype))]
                     end
-                    layer_beliefs[column] = GP(shift, ScaledKernel(MaternKernel(ν=1.5, metric=ScaledEuclidean()), scale))
+                    layer_beliefs[column] = GP(shift, ScaledKernel(MaternKernel(ν=2.5, metric=ScaledEuclidean()), scale))
                 end
                 push!(rocktype_starter_beliefs, layer_beliefs)
             end
@@ -94,7 +94,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
         return starter_beliefs
     end
 
-    function CCSPOMDP(load_cached::Bool = true, cache_file::String = "src/cache/pomdp_earth.jld2")
+    function CCSPOMDP()
         
         feature_names = [:z, :permeability, :topSealThickness]
         lines = [Segment(Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
@@ -106,13 +106,9 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
         Base.rand(0.0:float(GRID_SIZE * SPACING))) for _ in 1:NUM_WELLS]
         
         gps = initialize_belief(feature_names)
-        if load_cached && isfile(cache_file)
-            earth = JLD2.load(cache_file, "earth")
-        else
-            earth = initialize_earth(gps, feature_names)
-            jldsave(cache_file; earth)
-        end
-        rtype_belief = [Distributions.Categorical(3) for _ in 1:NUM_LAYERS]
+        earth = initialize_earth(gps, feature_names)
+
+        rtype_belief = [Distributions.Categorical(length(instances(RockType))) for _ in 1:NUM_LAYERS]
         
         pomdp = new(CCS_State(earth, lines, wells), 
                         feature_names, 
@@ -349,16 +345,9 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
                 if belief_prob == 0.0
                     continue
                 end
-                println("og ms computation")
-                @time ms = marginals(pomdp.belief[rocktype][layer][column](GRIDX))
-                println("my ms computation")
-                @time my_ms = my_marginals(pomdp.belief[rocktype][layer][column], GRIDX)
+                ms = marginals(pomdp.belief[rocktype][layer][column](GRIDX))
                 mg_stds = std.(ms)
-                my_mg_stds = std.(my_ms)
                 mg_means = mean.(ms)
-                my_mg_means = mean.(my_ms)
-                @assert mg_stds ≈ my_mg_stds
-                @assert mg_means ≈ my_mg_means
 
                 # information gain
                 var_compontent = ((mg_stds .^ 2) .+ (mg_means .- all_rock_mean) .^ 2) .* belief_prob

@@ -2,8 +2,8 @@
 const NUM_LAYERS = 5
 const NUM_LINES = 7
 const NUM_WELLS = 15
-const GRID_SIZE = 100
-const SPACING = 100 # 100 m grid cells
+const GRID_SIZE = 25
+const SPACING = 1000 # 1km grid cells
 
 const SEISMIC_N_POINTS = 15
 
