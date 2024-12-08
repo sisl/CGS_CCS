@@ -13,10 +13,10 @@ struct LayerFeatures
     gt::GeoTable
     df::DataFrame
     layer_rocktype::RockType
-    function LayerFeatures(feats::Vector{Symbol}, beliefs, layer::Int)
+    function LayerFeatures(beliefs, layer::Int)
         layer_rtype = Base.rand(1:3)
         dfs::Vector{DataFrame} = []
-        for feat in feats
+        for feat in FEATURE_NAMES
             f = beliefs[layer_rtype][layer][feat]
             simul = rand(f(GRIDX))
             df = DataFrame(feat => simul)
@@ -35,23 +35,22 @@ A type for the state of the CCS POMDP
 Currently, we allow a Vector of LayerFeatures to simulate a layer cake model
 and a vector of seismic lines
 """
-struct CCS_State
-    earth::Vector{LayerFeatures}
-    seismic_lines::Vector{Segment}
-    well_logs::Vector{Point}
+mutable struct CCSState
+    # Some measure of uncertainty over the whole map,
+    # if < 0, uninitialized
+    map_uncertainty::Float64 
+    belief::Vector{Vector{Dict{Symbol, Any}}} # Every layer/feature combo has 3 GPs : for shale, siltstone, sandstone
+    rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
+    isterminated::Bool
+    num_points::Int
+    obs_distr
 end
 
 struct ScaledEuclidean <: Distances.PreMetric
 end
 
 @inline function Distances._evaluate(::ScaledEuclidean,a::AbstractVector{T},b::AbstractVector{T}) where {T}
-    # @boundscheck if length(a) != length(b)
-    #     throw(DimensionMismatch("first array has length $(length(a)) which does not match the length of the second, $(length(b))."))
-    # end
     ans = sqrt(sum(((a ./ SPACING) .- (b ./ SPACING)) .^ 2))
-    # if Base.rand(1:2500000) == 42
-    #     println("Dist betweeen $a and $b is $ans")
-    # end
     return ans
 end
 
@@ -61,25 +60,23 @@ end
     Euclidean()(a / SPACING, b / SPACING)
 end
 
-mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Geometry}, Any}
-    state::CCS_State
-    feature_names::Vector{Symbol}
-    map_uncertainty::Float64 # Some measure of uncertainty over the whole map
-    belief::Vector{Vector{Dict{Symbol, Any}}} # Every layer/feature combo has 3 GPs : for shale, siltstone, sandstone
+CCSAction = @NamedTuple{id::Symbol, geometry::Geometry}
+mutable struct CCSPOMDP <: POMDP{CCSState, @NamedTuple{id::Symbol, geometry::Geometry}, Any}
+    initial_state::CCSState
     action_index::Dict
-    rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
-    terminal_state::CCS_State
-    num_points::Int
+    earth::Vector{LayerFeatures}
+    seismic_lines::Vector{Segment}
+    well_logs::Vector{Point}
 
-    initialize_earth(beliefs, feat_names) = [LayerFeatures(feat_names, beliefs, layer) for layer in 1:NUM_LAYERS]
+    initialize_earth(beliefs) = [LayerFeatures(beliefs, layer) for layer in 1:NUM_LAYERS]
 
-    function initialize_belief(feature_names::Vector{Symbol})::Vector{Vector{Dict}}
+    function initialize_belief()::Vector{Vector{Dict}}
         starter_beliefs::Vector{Vector{Dict}} = []
         for rocktype in 1:length(instances(RockType))
             rocktype_starter_beliefs::Vector{Dict} = []
             for layer in 1:NUM_LAYERS
                 layer_beliefs = Dict()
-                for column in feature_names
+                for column in FEATURE_NAMES
                     if column == :z
                         # Simplifying assumption: z is a linear function of layer with noise
                         shift, scale = (500 * layer, 200 * 200)
@@ -96,59 +93,88 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     end
 
     function CCSPOMDP()
-        feature_names = FEATURE_NAMES
         lines = [Segment(Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
-        Base.rand(0.0:float(GRID_SIZE * SPACING))), 
-        Point(Base.rand(0.0:float(GRID_SIZE * SPACING)),
-        Base.rand(0.0:float(GRID_SIZE * SPACING))))
-        for _ in 1:NUM_LINES]
+                                Base.rand(0.0:float(GRID_SIZE * SPACING))), 
+                         Point(Base.rand(0.0:float(GRID_SIZE * SPACING)),
+                                Base.rand(0.0:float(GRID_SIZE * SPACING))))
+                 for _ in 1:NUM_LINES]
+
         wells = [Point(Base.rand(0.0:float(GRID_SIZE * SPACING)), 
-        Base.rand(0.0:float(GRID_SIZE * SPACING))) for _ in 1:NUM_WELLS]
+                        Base.rand(0.0:float(GRID_SIZE * SPACING))) 
+                 for _ in 1:NUM_WELLS]
         
-        gps = initialize_belief(feature_names)
-        earth = initialize_earth(gps, feature_names)
+        gps = initialize_belief()
+        earth = initialize_earth(gps)
 
         rtype_belief = [Distributions.Categorical(length(instances(RockType))) for _ in 1:NUM_LAYERS]
         
-        pomdp = new(CCS_State(earth, lines, wells), 
-                        feature_names, 
-                        -1.0, # signals unknown map uncertainty
-                        gps,
-                        Dict(), # TODO: Initialize action and actionindex here!
-                        rtype_belief,
-                        CCS_State(Vector{LayerFeatures}(), Vector{Segment}(), Vector{Point}()),
-                        0)
-
-        return pomdp
+        return new(CCSState(-1.0, 
+                            gps, 
+                            rtype_belief, 
+                            false, 
+                            0, 
+                            nothing), 
+                    Dict(), # Will get filled the first time actionindex is called
+                    earth,
+                    lines,
+                    wells) 
+                    
     end
 
 end
 include("vis_utils.jl")
 
-POMDPs.states(pomdp::CCSPOMDP) = [pomdp.state, pomdp.terminal_state]
+POMDPs.initialstate(pomdp::CCSPOMDP) = Deterministic(deepcopy(pomdp.initial_state))
 
-POMDPs.initialstate(pomdp::CCSPOMDP) = SparseCat([pomdp.state, pomdp.terminal_state], [1.0, 0.0])
-
-# POMDPs.stateindex(pomdp::CCSPOMDP, state::CCS_State) = length(pomdp.state.earth) > 0 ? 1 : 2
+function POMDPs.isterminal(pomdp::CCSPOMDP, state::CCSState)
+    return state.isterminated
+end
 
 function POMDPs.transition(pomdp::CCSPOMDP, state, action)
-    if action.id == :terminate_action
-        return SparseCat([pomdp.state, pomdp.terminal_state], [0.0, 1.0])
-    else
-        return SparseCat([pomdp.state, pomdp.terminal_state], [1.0, 0.0])
+    # Construct next state based on action
+    nextstate::CCSState = deepcopy(state) # Does this take too long?
+    if action.id == :well_action
+        nextstate.num_points += 1
+    elseif action.id == :seismic_action
+        nextstate.num_points += SEISMIC_N_POINTS
+    elseif action.id == :terminate_action
+        nextstate.isterminated = true
+        return Deterministic(nextstate)
     end
+    # Queue up next observation as well:
+    component_distributions::Vector{MixtureModel{Multivariate, Distributions.Continuous, MvNormal, Distributions.Categorical{Float64, Vector{Float64}}}} = []
+    for layer in 1:NUM_LAYERS
+        if action.id == :well_action # an observation with action_id == :well_action determines rock type
+            rocktype = pomdp.earth[layer].layer_rocktype
+            upd_prob = zeros(length(instances(RockType)))
+            upd_prob[Int(rocktype)] = 1.0
+            nextstate.rocktype_belief[layer] = Distributions.Categorical(upd_prob)
+        end
+        for feature in FEATURE_NAMES
+            push!(component_distributions, observe(pomdp, 
+                                                    nextstate, 
+                                                    action.geometry, 
+                                                    layer, 
+                                                    feature, 
+                                                    action.id))
+        end
+    end
+    nextstate.obs_distr = product_distribution(component_distributions)
+    return Deterministic(nextstate)
 end
 
 function POMDPs.actions(pomdp::CCSPOMDP)::Vector{NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}}}
-    well_actions = [(id=:well_action, geometry=x) for x in pomdp.state.well_logs]
-    seismic_actions = [(id=:seismic_action, geometry=x) for x in pomdp.state.seismic_lines]
-    # Removing observe actions for the time being.
-    observe_actions = [] # [(id=:observe_action, geometry=x.vertices[1]) for x in domain(pomdp.state.earth[1].gt)]
+    well_actions = [(id=:well_action, geometry=x) for x in pomdp.well_logs]
+    seismic_actions = [(id=:seismic_action, geometry=x) for x in pomdp.seismic_lines]
+    # if you feel your solver is capable of handling many actions, but bad at recalling its own belief, you
+    # can include observation actions by uncommenting the following line. This would add ~ 500 extra actions though,
+    # so its generally not a good idea.
+    observe_actions = [] # [(id=:observe_action, geometry=x.vertices[1]) for x in domain(pomdp.earth[1].gt)]
     terminate_action = [(id=:terminate_action, geometry=Segment(Point(0., 0.), Point(10., 10.)))]
     return [well_actions; seismic_actions; observe_actions; terminate_action]
 end
 
-function POMDPs.actionindex(pomdp, action::@NamedTuple{id::Symbol, geometry::Geometry})
+function POMDPs.actionindex(pomdp::CCSPOMDP, action)
     if action in keys(pomdp.action_index)
         return pomdp.action_index[action]
     end
@@ -158,30 +184,30 @@ function POMDPs.actionindex(pomdp, action::@NamedTuple{id::Symbol, geometry::Geo
     end
     return pomdp.action_index[action]
 end
-function observe(pomdp::CCSPOMDP, point::Point, layer::Int, column::Symbol, action_id::Symbol)
+function observe(pomdp::CCSPOMDP, state::CCSState, point::Point, layer::Int, column::Symbol, action_id::Symbol)
     x = pcu(point)
-    y = pomdp.state.earth[layer].gt[point, column]
-    return observe(pomdp, x, y, layer, column, action_id)
+    y = pomdp.earth[layer].gt[point, column]
+    return observe(state, x, y, layer, column, action_id)
 end 
-function observe(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol, action_id::Symbol)
+function observe(pomdp::CCSPOMDP, state::CCSState, geom::Segment, layer::Int, column::Symbol, action_id::Symbol)
     p1 = geom.vertices[1]
     p2 = geom.vertices[2]
     points = [p1 * (1 - t) + p2 * t for t in range(0, stop=1, length=SEISMIC_N_POINTS)]
     x = pcu(points)
-    y = [pomdp.state.earth[layer].gt[pt, column][1] for pt in points]
-    return observe(pomdp, x, y, layer, column, action_id)
+    y = [pomdp.earth[layer].gt[pt, column][1] for pt in points]
+    return observe(state, x, y, layer, column, action_id)
 end
 
-function observe(pomdp::CCSPOMDP, x::Vector{Vector{Float64}}, y::Vector{Float64}, layer::Int, column::Symbol, action_id::Symbol)
+function observe(state::CCSState, x::Vector{Vector{Float64}}, y::Vector{Float64}, layer::Int, column::Symbol, action_id::Symbol)
     # We return a mixture model of the GP conditioned on the rocktype
     obs_conditioned_on_rocktype = Vector{MvNormal}(undef, length(instances(RockType)))
     unc = ACTION_UNCERTAINTY[(action_id, column)]
     
     for rocktype in 1:length(instances(RockType))
-        if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
+        if state.rocktype_belief[layer].p[rocktype] == 0.0
             obs_conditioned_on_rocktype[rocktype] = MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
         end
-        f = pomdp.belief[rocktype][layer][column]
+        f = state.belief[rocktype][layer][column]
         if unc < 0 # Feature belief not changed by action
             mean_cond = mean(f(x))
             cov_cond = cov(f(x))
@@ -190,38 +216,19 @@ function observe(pomdp::CCSPOMDP, x::Vector{Vector{Float64}}, y::Vector{Float64}
             end
         else
             p_fx = posterior(f(x, unc), y)
-            pomdp.belief[rocktype][layer][column] = p_fx
+            state.belief[rocktype][layer][column] = p_fx
             
             mean_cond = mean(p_fx(x))
             cov_cond = cov(p_fx(x))
         end
-        cov_cond += 1e-4 * I
+        cov_cond += 1e-4 * I # TODO: see if this is still required
         obs_conditioned_on_rocktype[rocktype] = MvNormal(mean_cond, cov_cond)
     end
-    return Distributions.MixtureModel(obs_conditioned_on_rocktype, pomdp.rocktype_belief[layer].p)
+    return Distributions.MixtureModel(obs_conditioned_on_rocktype, state.rocktype_belief[layer].p)
 end
 
-function POMDPs.observation(pomdp::CCSPOMDP, action, state)
-    if action.id == :well_action
-        pomdp.num_points += 1
-    elseif action.id == :seismic_action
-        pomdp.num_points += SEISMIC_N_POINTS
-    end
-    println("$(action.id) $(pomdp.num_points)")
-    component_distributions::Vector{MixtureModel{Multivariate, Distributions.Continuous, MvNormal, Distributions.Categorical{Float64, Vector{Float64}}}} = []
-    for layer in 1:NUM_LAYERS
-        if action.id == :well_action # an observation with action_id == :well_action determines rock type
-            rocktype = pomdp.state.earth[layer].layer_rocktype
-            upd_prob = zeros(length(instances(RockType)))
-            upd_prob[Int(rocktype)] = 1.0
-            pomdp.rocktype_belief[layer] = Distributions.Categorical(upd_prob)
-        end
-        for feature in pomdp.feature_names
-            push!(component_distributions, observe(pomdp, action.geometry, layer, feature, action.id))
-        end
-    end
-
-    return product_distribution(component_distributions)
+function POMDPs.observation(pomdp::CCSPOMDP, state, action, state_prime)
+    return state_prime.obs_distr
 end
 
 function reward_action_cost(action::NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}})
@@ -229,8 +236,6 @@ function reward_action_cost(action::NamedTuple{(:id, :geometry), Tuple{Symbol, G
         return -WELL_COST
     elseif action.id == :seismic_action
         return -SEISMIC_LINE_COST
-    elseif action.id == :observe_action
-        return 0.
     else
         return 0.
     end
@@ -306,18 +311,6 @@ function score_component(feature::Symbol, value)
     end
 end
 
-function mean_and_var(f, x)
-    C_xcond_x = cov(f.prior, f.data.x, x)
-    m_post = mean(f.prior, x) + C_xcond_x' * f.data.α
-    C_post_diag = var(f.prior, x) - vec(sum(abs2, f.data.C.U' \ C_xcond_x; dims=1))
-    return (m_post, C_post_diag)
-end
-
-function my_marginals(f, x)
-    m, c = mean_and_var(f, x)
-    return Normal.(m, sqrt.(c))
-end
-
 """
 Computes the information gain and suitability reward components
 While this would be more readable as two separate functions, the pattern of indexing
@@ -328,9 +321,7 @@ Information gain is measured as the mean of scaled marginal standard deviations 
 
 Suitability is measured as the sum of the number of points that we are confident are suitable or unsuitable.
 """
-function reward_information_gain_suitability(pomdp::CCSPOMDP)
-    original_uncertainty::Float64 = pomdp.map_uncertainty
-    
+function reward_information_suitability(state::CCSState) 
     # Both info and suitability
     npts = length(GRIDX)
 
@@ -349,17 +340,17 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
         fill!(sample_values, 0.0)
         fill!(prob_mask, 0.0)
 
-        for column in pomdp.feature_names
+        for column in FEATURE_NAMES
             # information_gain
             fill!(scaled_var_mtx, 0.0)
             fill!(all_rock_mean, 0.0)
 
             for rocktype in 1:length(instances(RockType))
-                belief_prob = pomdp.rocktype_belief[layer].p[rocktype]
+                belief_prob = state.rocktype_belief[layer].p[rocktype]
                 if belief_prob == 0.0
                     continue
                 end
-                all_rock_mean .+= mean(pomdp.belief[rocktype][layer][column], GRIDX) .* belief_prob
+                all_rock_mean .+= mean(state.belief[rocktype][layer][column], GRIDX) .* belief_prob
             end
             
             all_rock_mean ./= 2.
@@ -367,11 +358,11 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
             prev_end = 0
             for rocktype in 1:length(instances(RockType))
                 # both
-                belief_prob = pomdp.rocktype_belief[layer].p[rocktype]
+                belief_prob = state.rocktype_belief[layer].p[rocktype]
                 if belief_prob == 0.0
                     continue
                 end
-                ms = marginals(pomdp.belief[rocktype][layer][column](GRIDX))
+                ms = marginals(state.belief[rocktype][layer][column](GRIDX))
                 mg_stds = std.(ms)
                 mg_means = mean.(ms)
 
@@ -381,7 +372,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
 
                 # suitability
                 rocktype_nsamples = Int(floor(belief_prob * SUITABILITY_NSAMPLES))
-                norms = [Normal(μ, σ) for (μ, σ) in zip(mg_means, mg_stds)]
+                norms = [Normal(μ, σ) for (μ, σ) in zip(mg_means, mg_stds)] # This can be sped up with MvNormal
                 incr = [score_component(column, rand(N)) for N in norms for _ in 1:rocktype_nsamples]
                 sample_values[npts * prev_end + 1: npts * (prev_end + rocktype_nsamples)] .+= incr
                 prob_mask[prev_end + 1:prev_end + rocktype_nsamples] .= rocktype
@@ -390,7 +381,7 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
             layer_col_unc += mean(sqrt.(scaled_var_mtx))
         end
         # suitability
-        sample_values ./= length(pomdp.feature_names)
+        sample_values ./= length(FEATURE_NAMES)
         sample_matr = reshape(sample_values, length(GRIDX), SUITABILITY_NSAMPLES)
         bits_matr = sample_matr .> SUITABILITY_THRESHOLD
         suitable_pts = (Statistics.mean(bits_matr .* prob_mask', dims=2) .>= SUITABILITY_CONF_THRESHOLD)
@@ -400,32 +391,26 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
         total_grid_suitability += SUITABILITY_BIAS * sum(unsuitable_pts)
     end
 
-    pomdp.map_uncertainty = layer_col_unc
+    state.map_uncertainty = layer_col_unc
 
-    return original_uncertainty - layer_col_unc, total_grid_suitability
+    return layer_col_unc, total_grid_suitability
 end
 
-function POMDPs.reward(pomdp::CCSPOMDP, state, action)
+function POMDPs.reward(pomdp::CCSPOMDP, state, action, state_prime)
     if action.id == :terminate_action
-        return 0.
+        return 0.0
     end
-    # println("reward $(action.id)")
     action_cost = reward_action_cost(action)
     
-    information_gain, suitability = reward_information_gain_suitability(pomdp)
+    if state.map_uncertainty < 0.0
+        orig_uncertainty, _ = reward_information_suitability(state)
+    else
+        orig_uncertainty = state.map_uncertainty
+    end
+    new_uncertainty, suitability = reward_information_suitability(state_prime)
 
-    total_reward = action_cost + λ_1 * information_gain + λ_2 * suitability
-    return total_reward
+    return action_cost + λ_1 * (orig_uncertainty - new_uncertainty) + λ_2 * suitability
 end
 
-# function POMDPs.gen(pomdp::CCSPOMDP, state, action, rng)
-#     println("Observation: ")
-#     @time oc = rand(POMDPs.observation(pomdp, action, state))
-#     println("Reward: ")
-#     @time rew = POMDPs.reward(pomdp, state, action)
-#     return (sp = pomdp.state,
-#             o = oc,
-#             r = rew)
-# end
 
-POMDPs.discount(pomdp::CCSPOMDP) = 0.95 
+POMDPs.discount(pomdp::CCSPOMDP) = 0.95

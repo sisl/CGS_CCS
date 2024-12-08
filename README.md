@@ -10,10 +10,11 @@ The POMDP formulation tracks suitability of various grid locations.
 Suitability is an average of individual scores for each feature. If you have a feature that
 you think would help determine suitability, you can add it with the following steps:
 
-1. In `src/config.jl` add a prior belief of your variable's value `:featureName => (mean, variance)` to the `PRIOR_BELIEF` dictionary
-2. In `src/config.jl` add action uncertainties to the `a_u` dictionary `(:action_type, :featureName) => variance`
+1. In `src/config.jl` add the name of your feature to `FEATURE_NAMES`
+2. In `src/config.jl` add a prior belief of your variable's value `:featureName => (mean, variance)` to the `PRIOR_BELIEF` dictionary
+3. In `src/config.jl` add action uncertainties to the `a_u` dictionary `(:action_type, :featureName) => variance`
     - This means that an action of `:action_type` can inform us of the value of `:featureName` with `variance`
-3. Include logic on how your feature is to be scored in the `score_component` function, which returns a value 1 - 5
+4. Include logic on how your feature is to be scored in the `score_component` function, which returns a value 1 - 5
 
 ## Planning Links:
 

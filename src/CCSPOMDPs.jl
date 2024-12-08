@@ -26,7 +26,7 @@ include("config.jl")
 export
     GeoFeatures,
     LayerFeatures,
-    CCS_State,
+    CCSState,
     CCSPOMDP,
     reward_action_cost,
     SPACING,

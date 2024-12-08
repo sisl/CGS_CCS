@@ -59,7 +59,7 @@ function POMDPs.action(p::CGSExpertPolicy, b)
             cell.probability *= 0.9
         end
     end
-    p.budget -= CCSPOMDPs.reward_action_cost(chosen_action)
+    p.budget += CCSPOMDPs.reward_action_cost(chosen_action)
 
     if p.budget <= 0
         return actions(p.pomdp)[end] # terminate action

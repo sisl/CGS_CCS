@@ -9,7 +9,7 @@ const SEISMIC_N_POINTS = 15
 
 @enum RockType SANDSTONE=1 SILTSTONE=2 SHALE=3
 
-FEATURE_NAMES = [
+const FEATURE_NAMES = [
     :permeability,
     :topSealThickness,
     :z,
