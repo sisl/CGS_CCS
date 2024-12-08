@@ -17,6 +17,7 @@ using JLD2
 using ParticleFilters
 using POMDPModelTools
 using Plots
+using LinearAlgebra
 using DataStructures
 @reexport using POMDPs
 

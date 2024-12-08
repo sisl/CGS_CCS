@@ -56,7 +56,6 @@ function POMDPs.action(p::CGSExpertPolicy, b)
     chosen_action = rand(SparseCat(all_actions, probs))
     for cell in p.grid
         if intersects(cell.region, chosen_action.geometry)
-            # println("cell.region: ", cell.region, " action.geometry: ", chosen_action.geometry)
             cell.probability *= 0.9
         end
     end
@@ -69,11 +68,11 @@ function POMDPs.action(p::CGSExpertPolicy, b)
     return chosen_action
 end
 
-pomdp = CCSPOMDPs.CCSPOMDP(true, "src/cache/earth_root.jld2");
+pomdp = CCSPOMDPs.CCSPOMDP();
 
 expert_pol = CGSExpertPolicy(pomdp);
 
-rollout_sim = RolloutSimulator(max_steps=10);
+rollout_sim = RolloutSimulator(max_steps=20);
 expert_reward = simulate(rollout_sim, pomdp, expert_pol, NothingUpdater())
 
 @show expert_reward;

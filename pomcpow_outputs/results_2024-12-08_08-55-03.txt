@@ -1,0 +1,7 @@
+a: well_action, r: -2.780741006084895
+a: well_action, r: -2.7810832344621588
+a: well_action, r: -2.781040472937171
+a: terminate_action, r: 0.21875
+
+Cumulative Discounted Reward:
+    POMCPOW: -7.745108324399744

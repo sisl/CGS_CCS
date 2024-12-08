@@ -69,6 +69,7 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
     action_index::Dict
     rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
     terminal_state::CCS_State
+    num_points::Int
 
     initialize_earth(beliefs, feat_names) = [LayerFeatures(feat_names, beliefs, layer) for layer in 1:NUM_LAYERS]
 
@@ -115,8 +116,8 @@ mutable struct CCSPOMDP <: POMDP{CCS_State, @NamedTuple{id::Symbol, geometry::Ge
                         gps,
                         Dict(), # TODO: Initialize action and actionindex here!
                         rtype_belief,
-                        CCS_State(Vector{LayerFeatures}(), Vector{Segment}(), Vector{Point}())
-                        )
+                        CCS_State(Vector{LayerFeatures}(), Vector{Segment}(), Vector{Point}()),
+                        0)
 
         return pomdp
     end
@@ -128,7 +129,7 @@ POMDPs.states(pomdp::CCSPOMDP) = [pomdp.state, pomdp.terminal_state]
 
 POMDPs.initialstate(pomdp::CCSPOMDP) = SparseCat([pomdp.state, pomdp.terminal_state], [1.0, 0.0])
 
-POMDPs.stateindex(pomdp::CCSPOMDP, state::CCS_State) = length(pomdp.state.earth) > 0 ? 1 : 2
+# POMDPs.stateindex(pomdp::CCSPOMDP, state::CCS_State) = length(pomdp.state.earth) > 0 ? 1 : 2
 
 function POMDPs.transition(pomdp::CCSPOMDP, state, action)
     if action.id == :terminate_action
@@ -143,7 +144,7 @@ function POMDPs.actions(pomdp::CCSPOMDP)::Vector{NamedTuple{(:id, :geometry), Tu
     seismic_actions = [(id=:seismic_action, geometry=x) for x in pomdp.state.seismic_lines]
     # Removing observe actions for the time being.
     observe_actions = [] # [(id=:observe_action, geometry=x.vertices[1]) for x in domain(pomdp.state.earth[1].gt)]
-    terminate_action = [(id=:terminate_action, geometry=Segment(Point(0., 0.), Point(0., 0.)))]
+    terminate_action = [(id=:terminate_action, geometry=Segment(Point(0., 0.), Point(10., 10.)))]
     return [well_actions; seismic_actions; observe_actions; terminate_action]
 end
 
@@ -157,51 +158,36 @@ function POMDPs.actionindex(pomdp, action::@NamedTuple{id::Symbol, geometry::Geo
     end
     return pomdp.action_index[action]
 end
-
 function observe(pomdp::CCSPOMDP, point::Point, layer::Int, column::Symbol, action_id::Symbol)
-    # We return a mixture model of the GP conditioned on the rocktype
-    obs_conditioned_on_rocktype = Vector{MvNormal}(undef, length(instances(RockType)))
     x = pcu(point)
     y = pomdp.state.earth[layer].gt[point, column]
-    unc = ACTION_UNCERTAINTY[(action_id, column)]
-    
-    for rocktype in 1:length(instances(RockType))
-        if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
-            MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
-        end
-        f = pomdp.belief[rocktype][layer][column]
-        if unc < 0 # Feature belief not changed by action
-            mean_cond = mean(f(x))
-            cov_cond = cov(f(x))
-        else
-            p_fx = posterior(f(x, unc), y)
-            pomdp.belief[rocktype][layer][column] = p_fx
-            
-            mean_cond = mean(p_fx(x))
-            cov_cond = cov(p_fx(x))
-        end
-        obs_conditioned_on_rocktype[rocktype] = MvNormal(mean_cond, cov_cond)
-    end
-    return Distributions.MixtureModel(obs_conditioned_on_rocktype, pomdp.rocktype_belief[layer].p)
-end
-
+    return observe(pomdp, x, y, layer, column, action_id)
+end 
 function observe(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol, action_id::Symbol)
     p1 = geom.vertices[1]
     p2 = geom.vertices[2]
     points = [p1 * (1 - t) + p2 * t for t in range(0, stop=1, length=SEISMIC_N_POINTS)]
-    obs_conditioned_on_rocktype = Vector{MvNormal}(undef, length(instances(RockType)))
     x = pcu(points)
     y = [pomdp.state.earth[layer].gt[pt, column][1] for pt in points]
-    unc = ACTION_UNCERTAINTY[(action_id, column)]
+    return observe(pomdp, x, y, layer, column, action_id)
+end
 
+function observe(pomdp::CCSPOMDP, x::Vector{Vector{Float64}}, y::Vector{Float64}, layer::Int, column::Symbol, action_id::Symbol)
+    # We return a mixture model of the GP conditioned on the rocktype
+    obs_conditioned_on_rocktype = Vector{MvNormal}(undef, length(instances(RockType)))
+    unc = ACTION_UNCERTAINTY[(action_id, column)]
+    
     for rocktype in 1:length(instances(RockType))
-        if pomdp.rocktype_belief[layer].p[rocktype] == 0.0 || action_id == :terminate_action
-            MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
+        if pomdp.rocktype_belief[layer].p[rocktype] == 0.0
+            obs_conditioned_on_rocktype[rocktype] = MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
         end
         f = pomdp.belief[rocktype][layer][column]
         if unc < 0 # Feature belief not changed by action
             mean_cond = mean(f(x))
             cov_cond = cov(f(x))
+            if action_id == :terminate_action
+                cov_cond = cov_cond * I
+            end
         else
             p_fx = posterior(f(x, unc), y)
             pomdp.belief[rocktype][layer][column] = p_fx
@@ -209,12 +195,19 @@ function observe(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol, act
             mean_cond = mean(p_fx(x))
             cov_cond = cov(p_fx(x))
         end
+        cov_cond += 1e-4 * I
         obs_conditioned_on_rocktype[rocktype] = MvNormal(mean_cond, cov_cond)
     end
     return Distributions.MixtureModel(obs_conditioned_on_rocktype, pomdp.rocktype_belief[layer].p)
 end
 
 function POMDPs.observation(pomdp::CCSPOMDP, action, state)
+    if action.id == :well_action
+        pomdp.num_points += 1
+    elseif action.id == :seismic_action
+        pomdp.num_points += SEISMIC_N_POINTS
+    end
+    println("$(action.id) $(pomdp.num_points)")
     component_distributions::Vector{MixtureModel{Multivariate, Distributions.Continuous, MvNormal, Distributions.Categorical{Float64, Vector{Float64}}}} = []
     for layer in 1:NUM_LAYERS
         if action.id == :well_action # an observation with action_id == :well_action determines rock type
@@ -413,6 +406,9 @@ function reward_information_gain_suitability(pomdp::CCSPOMDP)
 end
 
 function POMDPs.reward(pomdp::CCSPOMDP, state, action)
+    if action.id == :terminate_action
+        return 0.
+    end
     # println("reward $(action.id)")
     action_cost = reward_action_cost(action)
     
