@@ -56,12 +56,11 @@ end
 
 @inline (dist::ScaledEuclidean)(a::AbstractArray,b::AbstractArray) = Distances._evaluate(dist,a,b)
 @inline (dist::ScaledEuclidean)(a::Number, b::Number) = begin
-    # println("Dist betweeen $a and $b is $(Euclidean()(a, b))") # Always checks between 1.0 and 1.0 for some reason
     Euclidean()(a / SPACING, b / SPACING)
 end
 
 CCSAction = @NamedTuple{id::Symbol, geometry::Geometry}
-mutable struct CCSPOMDP <: POMDP{CCSState, @NamedTuple{id::Symbol, geometry::Geometry}, Any}
+struct CCSPOMDP <: POMDP{CCSState, @NamedTuple{id::Symbol, geometry::Geometry}, Any}
     initial_state::CCSState
     action_index::Dict
     earth::Vector{LayerFeatures}
@@ -139,7 +138,6 @@ function POMDPs.transition(pomdp::CCSPOMDP, state, action)
         nextstate.num_points += SEISMIC_N_POINTS
     elseif action.id == :terminate_action
         nextstate.isterminated = true
-        return Deterministic(nextstate)
     end
     # Queue up next observation as well:
     component_distributions::Vector{MixtureModel{Multivariate, Distributions.Continuous, MvNormal, Distributions.Categorical{Float64, Vector{Float64}}}} = []
@@ -154,12 +152,13 @@ function POMDPs.transition(pomdp::CCSPOMDP, state, action)
             push!(component_distributions, observe(pomdp, 
                                                     nextstate, 
                                                     action.geometry, 
-                                                    layer, 
-                                                    feature, 
+                                                    layer,
+                                                    feature,
                                                     action.id))
         end
     end
     nextstate.obs_distr = product_distribution(component_distributions)
+    @assert nextstate.obs_distr != nothing
     return Deterministic(nextstate)
 end
 
@@ -170,7 +169,7 @@ function POMDPs.actions(pomdp::CCSPOMDP)::Vector{NamedTuple{(:id, :geometry), Tu
     # can include observation actions by uncommenting the following line. This would add ~ 500 extra actions though,
     # so its generally not a good idea.
     observe_actions = [] # [(id=:observe_action, geometry=x.vertices[1]) for x in domain(pomdp.earth[1].gt)]
-    terminate_action = [(id=:terminate_action, geometry=Segment(Point(0., 0.), Point(10., 10.)))]
+    terminate_action = [(id=:terminate_action, geometry=Point(0., 0.) )]
     return [well_actions; seismic_actions; observe_actions; terminate_action]
 end
 
@@ -228,6 +227,10 @@ function observe(state::CCSState, x::Vector{Vector{Float64}}, y::Vector{Float64}
 end
 
 function POMDPs.observation(pomdp::CCSPOMDP, state, action, state_prime)
+    # TODO: Be more correct: Do state change in transititon and observation in observation
+    # TODO: Sanity check: level in tree to number of conditioning points
+    # TODO: Do the log prob + observation thing!
+    # TODO: Consideration: Perhaps conditional distributions for reward?
     return state_prime.obs_distr
 end
 
@@ -362,6 +365,8 @@ function reward_information_suitability(state::CCSState)
                 if belief_prob == 0.0
                     continue
                 end
+                # println("Marginals computation")
+                # @time 
                 ms = marginals(state.belief[rocktype][layer][column](GRIDX))
                 mg_stds = std.(ms)
                 mg_means = mean.(ms)
@@ -412,5 +417,16 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action, state_prime)
     return action_cost + λ_1 * (orig_uncertainty - new_uncertainty) + λ_2 * suitability
 end
 
+# ParticleFilters.obs_weight(pomdp::CCSPOMDP, state, action, state_prime) = 1.0
+
+function POMDPs.gen(pomdp::CCSPOMDP, state, action, rng)
+    println("transition")
+    @time sp = rand(POMDPs.transition(pomdp, state, action))
+    println("observation")
+    @time o = rand(POMDPs.observation(pomdp, state, action, sp))
+    println("reward")
+    @time r = POMDPs.reward(pomdp, state, action, sp)
+    return (sp=sp, o=o, r=r)
+end
 
 POMDPs.discount(pomdp::CCSPOMDP) = 0.95

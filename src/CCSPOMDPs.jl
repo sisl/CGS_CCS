@@ -5,6 +5,7 @@ using Distributions
 using Statistics
 using Random
 using DataFrames
+using Revise
 using Meshes
 using GeoTables
 import GLMakie as Mke

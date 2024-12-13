@@ -4,30 +4,45 @@ using POMDPModels
 using POMDPSimulators
 using POMCPOW
 using Dates
+using D3Trees
+using JLD2
 
-TREE_QUERIES = 2
-MAX_DEPTH = 2
-MAX_STEPS = 3
+function run_solver(max_depth = 22, tree_queries=100, tree_in_info=true)
+    println("Max Depth: $max_depth, Tree Queries: $tree_queries")
+    pomdp = CCSPOMDPs.CCSPOMDP();
+    solver = POMCPOWSolver(tree_queries=tree_queries,
+                            max_depth=max_depth,
+                            tree_in_info=tree_in_info,
+                            # estimate_value=0.0,
+                            enable_action_pw=false,
+                            check_repeat_obs=false,);
 
-pomdp = CCSPOMDPs.CCSPOMDP()
-solver = POMCPOWSolver(tree_queries=TREE_QUERIES, max_depth=MAX_DEPTH)
-planner = POMDPs.solve(solver, pomdp)
+    planner = POMDPs.solve(solver, pomdp);
 
-# Ask Mansur about max_steps
-hr = HistoryRecorder(max_steps=MAX_STEPS, show_progress=true)
-hist = simulate(hr, pomdp, planner)
+    hr = HistoryRecorder();
+    hist = simulate(hr, pomdp, planner)
+    return hist;
+end
 
-timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
-filename = "pomcpow_outputs/results_$timestamp.txt"
-
-cumulative_discounted_reward = discounted_reward(hist)
-
-open(filename, "w") do file
-    for row in hist
-        println(file, "a: $(row.a.id), r: $(row.r)")
+function write_results(hist)
+    timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
+    dirname = "pomcpow_outputs/results_$timestamp"
+    mkdir(dirname)
+    filename = "$dirname/reward.txt"
+    serialized_tree = "$dirname/tree.jld2"
+    cumulative_discounted_reward = discounted_reward(hist)
+    open(filename, "w") do file
+        println(file, "Cumulative Discounted Reward: $cumulative_discounted_reward")
     end
+    info = first(ainfo_hist(hist))
+    tree = D3Tree(info[:tree])
     
-    println(file)
-    println(file, "Cumulative Discounted Reward:")
-    println(file, "    POMCPOW: $cumulative_discounted_reward")
+    @save serialized_tree tree;
+end
+
+open("output.txt", "w") do io
+    redirect_stdout(io) do
+        @time hist = run_solver()
+        write_results(hist);
+    end
 end

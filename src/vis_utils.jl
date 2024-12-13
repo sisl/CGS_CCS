@@ -1,6 +1,7 @@
 # Visualization functions.
 """
 Visualize the uncertainty in the belief of a layer and feature.
+THESE DO NOT WORK WITH THE RECENT CODE REFACTOR
 """
 function visualize_uncertainty(pomdp::CCSPOMDP, layer::Int, column::Symbol)
     var_mtx = zeros(GRID_SIZE, GRID_SIZE)
