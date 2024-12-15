@@ -43,7 +43,7 @@ mutable struct CCSState
     rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
     isterminated::Bool
     num_points::Int
-    obs_distr
+    obs_pdf # Observation for that state and its pdf
 end
 
 struct ScaledEuclidean <: Distances.PreMetric
@@ -129,7 +129,15 @@ function POMDPs.isterminal(pomdp::CCSPOMDP, state::CCSState)
     return state.isterminated
 end
 
-function POMDPs.transition(pomdp::CCSPOMDP, state, action)
+# TODO: Sanity check: level in tree to number of conditioning points
+function POMDPs.gen(pomdp::CCSPOMDP, state, action, rng)
+    sp = generate_nextstate(pomdp, state, action)
+    o = update_sp_wobs(pomdp, state, action, sp)
+    r = POMDPs.reward(pomdp, state, action, sp)
+    return (sp=sp, o=o, r=r)
+end
+
+function generate_nextstate(pomdp::CCSPOMDP, state, action)
     # Construct next state based on action
     nextstate::CCSState = deepcopy(state) # Does this take too long?
     if action.id == :well_action
@@ -139,27 +147,48 @@ function POMDPs.transition(pomdp::CCSPOMDP, state, action)
     elseif action.id == :terminate_action
         nextstate.isterminated = true
     end
-    # Queue up next observation as well:
-    component_distributions::Vector{MixtureModel{Multivariate, Distributions.Continuous, MvNormal, Distributions.Categorical{Float64, Vector{Float64}}}} = []
+    return nextstate
+end
+
+function update_sp_wobs(pomdp::CCSPOMDP, prevstate, action, state)
+    components = []
     for layer in 1:NUM_LAYERS
         if action.id == :well_action # an observation with action_id == :well_action determines rock type
             rocktype = pomdp.earth[layer].layer_rocktype
             upd_prob = zeros(length(instances(RockType)))
             upd_prob[Int(rocktype)] = 1.0
-            nextstate.rocktype_belief[layer] = Distributions.Categorical(upd_prob)
+            state.rocktype_belief[layer] = Distributions.Categorical(upd_prob)
         end
         for feature in FEATURE_NAMES
-            push!(component_distributions, observe(pomdp, 
-                                                    nextstate, 
-                                                    action.geometry, 
-                                                    layer,
-                                                    feature,
-                                                    action.id))
+            x, y = get_x_y(pomdp, action.geometry, layer, feature)
+            obs = observe(state, x, y, layer, feature, action.id)
+            push!(components, obs)
         end
     end
-    nextstate.obs_distr = product_distribution(component_distributions)
-    @assert nextstate.obs_distr != nothing
-    return Deterministic(nextstate)
+    # println("Returning $components")
+    state.obs_pdf = components
+    return components
+end
+
+function ParticleFilters.obs_weight(pomdp::CCSPOMDP, state, action, state_prime, observation)
+    cum_prob = 1.0
+    for layer in 1:NUM_LAYERS
+        for (findx, feature) in enumerate(FEATURE_NAMES)
+            pdf_layer_feature = 0.0
+            for rocktype in 1:length(instances(RockType))
+                if state_prime.rocktype_belief[layer].p[rocktype] == 0.0
+                    continue
+                end
+                f = state_prime.belief[rocktype][layer][feature]
+                x, y = get_x_y(pomdp, action.geometry, layer, feature)
+                log_prob = logpdf(f(x), observation[(layer - 1) * length(FEATURE_NAMES) + findx])
+                pdf_layer_feature += state_prime.rocktype_belief[layer].p[rocktype] * exp(log_prob)
+            end
+            cum_prob *= pdf_layer_feature
+        end
+    end
+
+    return cum_prob
 end
 
 function POMDPs.actions(pomdp::CCSPOMDP)::Vector{NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}}}
@@ -183,55 +212,41 @@ function POMDPs.actionindex(pomdp::CCSPOMDP, action)
     end
     return pomdp.action_index[action]
 end
-function observe(pomdp::CCSPOMDP, state::CCSState, point::Point, layer::Int, column::Symbol, action_id::Symbol)
+function get_x_y(pomdp::CCSPOMDP, point::Point, layer::Int, column::Symbol)
     x = pcu(point)
     y = pomdp.earth[layer].gt[point, column]
-    return observe(state, x, y, layer, column, action_id)
+    return x, y
 end 
-function observe(pomdp::CCSPOMDP, state::CCSState, geom::Segment, layer::Int, column::Symbol, action_id::Symbol)
+function get_x_y(pomdp::CCSPOMDP, geom::Segment, layer::Int, column::Symbol)
     p1 = geom.vertices[1]
     p2 = geom.vertices[2]
     points = [p1 * (1 - t) + p2 * t for t in range(0, stop=1, length=SEISMIC_N_POINTS)]
     x = pcu(points)
     y = [pomdp.earth[layer].gt[pt, column][1] for pt in points]
-    return observe(state, x, y, layer, column, action_id)
+    return x, y
 end
 
 function observe(state::CCSState, x::Vector{Vector{Float64}}, y::Vector{Float64}, layer::Int, column::Symbol, action_id::Symbol)
     # We return a mixture model of the GP conditioned on the rocktype
-    obs_conditioned_on_rocktype = Vector{MvNormal}(undef, length(instances(RockType)))
+    obs_conditioned_on_rocktype::Vector{Vector{Float64}} = Vector(undef, length(instances(RockType)))
+    dummy_distr = MvNormal(1, 1.0)
     unc = ACTION_UNCERTAINTY[(action_id, column)]
     
     for rocktype in 1:length(instances(RockType))
         if state.rocktype_belief[layer].p[rocktype] == 0.0
-            obs_conditioned_on_rocktype[rocktype] = MvNormal(1, 1.0) # a short circuit when rocktype has probability 0
+            obs_conditioned_on_rocktype[rocktype] = rand(dummy_distr) # a short circuit when rocktype has probability 0
         end
-        f = state.belief[rocktype][layer][column]
-        if unc < 0 # Feature belief not changed by action
-            mean_cond = mean(f(x))
-            cov_cond = cov(f(x))
-            if action_id == :terminate_action
-                cov_cond = cov_cond * I
-            end
-        else
-            p_fx = posterior(f(x, unc), y)
-            state.belief[rocktype][layer][column] = p_fx
-            
-            mean_cond = mean(p_fx(x))
-            cov_cond = cov(p_fx(x))
+        if unc >= 0.0
+            state.belief[rocktype][layer][column] = posterior(state.belief[rocktype][layer][column](x, unc), y)
         end
-        cov_cond += 1e-4 * I # TODO: see if this is still required
-        obs_conditioned_on_rocktype[rocktype] = MvNormal(mean_cond, cov_cond)
-    end
-    return Distributions.MixtureModel(obs_conditioned_on_rocktype, state.rocktype_belief[layer].p)
-end
 
-function POMDPs.observation(pomdp::CCSPOMDP, state, action, state_prime)
-    # TODO: Be more correct: Do state change in transititon and observation in observation
-    # TODO: Sanity check: level in tree to number of conditioning points
-    # TODO: Do the log prob + observation thing!
-    # TODO: Consideration: Perhaps conditional distributions for reward?
-    return state_prime.obs_distr
+        fx = state.belief[rocktype][layer][column](x)
+        obs_conditioned_on_rocktype[rocktype] = rand(fx)
+    end
+
+    rand_ind = rand(state.rocktype_belief[layer])
+    
+    return obs_conditioned_on_rocktype[rand_ind]
 end
 
 function reward_action_cost(action::NamedTuple{(:id, :geometry), Tuple{Symbol, Geometry}})
@@ -377,7 +392,7 @@ function reward_information_suitability(state::CCSState)
 
                 # suitability
                 rocktype_nsamples = Int(floor(belief_prob * SUITABILITY_NSAMPLES))
-                norms = [Normal(μ, σ) for (μ, σ) in zip(mg_means, mg_stds)] # This can be sped up with MvNormal
+                norms = [Normal(μ, σ) for (μ, σ) in zip(mg_means, mg_stds)] # TODO: This can be sped up with MvNormal
                 incr = [score_component(column, rand(N)) for N in norms for _ in 1:rocktype_nsamples]
                 sample_values[npts * prev_end + 1: npts * (prev_end + rocktype_nsamples)] .+= incr
                 prob_mask[prev_end + 1:prev_end + rocktype_nsamples] .= rocktype
@@ -417,16 +432,5 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action, state_prime)
     return action_cost + λ_1 * (orig_uncertainty - new_uncertainty) + λ_2 * suitability
 end
 
-# ParticleFilters.obs_weight(pomdp::CCSPOMDP, state, action, state_prime) = 1.0
-
-function POMDPs.gen(pomdp::CCSPOMDP, state, action, rng)
-    println("transition")
-    @time sp = rand(POMDPs.transition(pomdp, state, action))
-    println("observation")
-    @time o = rand(POMDPs.observation(pomdp, state, action, sp))
-    println("reward")
-    @time r = POMDPs.reward(pomdp, state, action, sp)
-    return (sp=sp, o=o, r=r)
-end
 
 POMDPs.discount(pomdp::CCSPOMDP) = 0.95
