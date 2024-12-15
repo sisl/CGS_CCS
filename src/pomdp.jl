@@ -392,8 +392,8 @@ function reward_information_suitability(state::CCSState)
 
                 # suitability
                 rocktype_nsamples = Int(floor(belief_prob * SUITABILITY_NSAMPLES))
-                norms = [Normal(μ, σ) for (μ, σ) in zip(mg_means, mg_stds)] # TODO: This can be sped up with MvNormal
-                incr = [score_component(column, rand(N)) for N in norms for _ in 1:rocktype_nsamples]
+                norms = MvNormal(mg_means, diagm(mg_stds))
+                incr = [score_component(column, n) for n in rand(norms) for _ in 1:rocktype_nsamples]
                 sample_values[npts * prev_end + 1: npts * (prev_end + rocktype_nsamples)] .+= incr
                 prob_mask[prev_end + 1:prev_end + rocktype_nsamples] .= rocktype
                 prev_end += rocktype_nsamples
