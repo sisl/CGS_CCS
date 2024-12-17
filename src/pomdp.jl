@@ -390,7 +390,7 @@ function reward_information_suitability(state::CCSState)
 
                 # information gain
                 var_compontent = ((mg_stds .^ 2) .+ (mg_means) .^ 2 .- all_rock_mean) .* belief_prob
-                scaled_var_mtx .+= reshape(var_compontent, GRID_SIZE, GRID_SIZE)' #./ scaling_factor
+                scaled_var_mtx .+= reshape(var_compontent, GRID_SIZE, GRID_SIZE)'
 
                 # suitability
                 rocktype_nsamples = Int(floor(belief_prob * SUITABILITY_NSAMPLES))
@@ -400,9 +400,7 @@ function reward_information_suitability(state::CCSState)
                 prob_mask[prev_end + 1:prev_end + rocktype_nsamples] .= rocktype
                 prev_end += rocktype_nsamples
             end
-            if layer == 1 && column == :bottomSeal
-                println("w/o scaling, For layer $layer, column $column, \nmean uncertainty: $(mean(sqrt.(scaled_var_mtx))) \nwith scaling factor: $(sqrt(scaling_factor)), mean uncertainty after scaling: $(mean(sqrt.(scaled_var_mtx ./ scaling_factor)))")
-            end
+            # println("w/o scaling, For column $column, with scaling factor: $(sqrt(scaling_factor)), mean uncertainty after scaling: $(mean(sqrt.(scaled_var_mtx ./ scaling_factor)))")
             layer_col_unc += mean(sqrt.(scaled_var_mtx ./ scaling_factor))
         end
         # suitability
@@ -415,7 +413,7 @@ function reward_information_suitability(state::CCSState)
         unsuitable_pts = (Statistics.mean(bits_matr .* prob_mask', dims=2) .>= SUITABILITY_CONF_THRESHOLD)
         total_grid_suitability += SUITABILITY_BIAS * sum(unsuitable_pts)
     end
-
+    # println("Total Layer Col uncertainty: $layer_col_unc")
     state.map_uncertainty = layer_col_unc
 
     return layer_col_unc, total_grid_suitability
@@ -427,16 +425,16 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action, state_prime)
     end
     action_cost = reward_action_cost(action)
     
-    # if state.map_uncertainty < 0.0
+    if state.map_uncertainty < 0.0
         orig_uncertainty, _ = reward_information_suitability(state)
-    # else
-    #     orig_uncertainty = state.map_uncertainty
-    # end
+    else
+        orig_uncertainty = state.map_uncertainty
+    end
     new_uncertainty, suitability = reward_information_suitability(state_prime)
 
-    println("Action: $(action.id), \nzzzAction Cost: $action_cost, \nzzzUncertainty Change: $(λ_1*(orig_uncertainty - new_uncertainty)), \nzzzSuitability: $(λ_2*suitability)")
+    println("Action: $(action.id), \nzzzAction Cost: $action_cost, \nOrig_uncertainty: $(λ_1*(orig_uncertainty))\nNew_uncertainty: $(λ_1*(new_uncertainty))\nzzzUncertainty Change: $(λ_1*(orig_uncertainty - new_uncertainty)), \nzzzSuitability: $(λ_2*suitability)")
     return action_cost + λ_1 * (orig_uncertainty - new_uncertainty) + λ_2 * suitability
 end
 
 
-POMDPs.discount(pomdp::CCSPOMDP) = 0.95
+POMDPs.discount(pomdp::CCSPOMDP) = 0.99

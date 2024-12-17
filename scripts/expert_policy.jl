@@ -8,7 +8,7 @@ using Meshes
 using BeliefUpdaters
 using ProgressMeter
 
-START_BUDGET = 25.0
+START_BUDGET = 150.0 # Basically whatever the POMDP spends
 
 mutable struct GridCell
     region::Box
