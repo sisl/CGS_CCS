@@ -400,7 +400,7 @@ function reward_information_suitability(state::CCSState)
                 prob_mask[prev_end + 1:prev_end + rocktype_nsamples] .= rocktype
                 prev_end += rocktype_nsamples
             end
-            if layer == 1 && column == :topSealThickness
+            if layer == 1 && column == :permeability
                 println("w/o scaling, For layer $layer, column $column, \nmean uncertainty: $(mean(sqrt.(scaled_var_mtx))) \nwith scaling factor: $(sqrt(scaling_factor)), mean uncertainty after scaling: $(mean(sqrt.(scaled_var_mtx ./ scaling_factor)))")
             end
             layer_col_unc += mean(sqrt.(scaled_var_mtx ./ scaling_factor))
