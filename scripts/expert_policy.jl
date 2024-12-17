@@ -6,6 +6,7 @@ using POMDPModelTools
 using POMDPSimulators
 using Meshes
 using BeliefUpdaters
+using ProgressMeter
 
 START_BUDGET = 25.0
 
@@ -68,11 +69,42 @@ function POMDPs.action(p::CGSExpertPolicy, b)
     return chosen_action
 end
 
-pomdp = CCSPOMDPs.CCSPOMDP();
+function runsims(nsims::Int = 40)
+    avg_reward = 0.0
 
-expert_pol = CGSExpertPolicy(pomdp);
+    @showprogress for _ in 1:nsims
+        pomdp = CCSPOMDPs.CCSPOMDP();
 
-rollout_sim = RolloutSimulator(max_steps=20);
-expert_reward = simulate(rollout_sim, pomdp, expert_pol, NothingUpdater())
+        expert_pol = CGSExpertPolicy(pomdp);
 
-@show expert_reward;
+        rollout_sim = RolloutSimulator(max_steps=20);
+        expert_reward = simulate(rollout_sim, pomdp, expert_pol, NothingUpdater())
+
+        avg_reward += expert_reward
+    end
+
+    avg_reward /= nsims
+    println("Expert Policy Average Reward: $avg_reward")
+end
+
+function runrand(nsims::Int = 40)
+    avg_reward = 0.0
+
+    @showprogress for _ in 1:nsims
+        pomdp = CCSPOMDPs.CCSPOMDP();
+
+        rand_policy = RandomPolicy(pomdp);
+
+        rollout_sim = RolloutSimulator(max_steps=20);
+        reward = simulate(rollout_sim, pomdp, rand_policy, NothingUpdater())
+
+        avg_reward += reward
+    end
+
+    avg_reward /= nsims
+    println("Random Policy Average Reward: $avg_reward")
+end
+
+
+runsims()
+runrand()

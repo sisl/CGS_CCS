@@ -5,7 +5,7 @@ const NUM_WELLS = 15
 const GRID_SIZE = 25
 const SPACING = 1000 # 1km grid cells
 
-const SEISMIC_N_POINTS = 15
+const SEISMIC_N_POINTS = 20
 
 @enum RockType SANDSTONE=1 SILTSTONE=2 SHALE=3
 
@@ -37,9 +37,9 @@ PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
     (:topSealThickness, SHALE) => (45, 15 * 15), # meters
 
     # These aren't actually used in GP initialization, but kept for consistency in the reward fn
-    (:z, SANDSTONE) => (500, 200 * 200), # meters
-    (:z, SILTSTONE) => (500, 200 * 200), # meters
-    (:z, SHALE) => (500, 200 * 200), # meters
+    (:z, SANDSTONE) => (500, 150 * 150), # meters
+    (:z, SILTSTONE) => (500, 150 * 150), # meters
+    (:z, SHALE) => (500, 150 * 150), # meters
 
     # independent of rock type
     (:bottomSeal, SANDSTONE) => (0, 1),
@@ -52,8 +52,8 @@ PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
 
     # again independent of rock type
     (:salinity, SANDSTONE) => (60, 20 ^ 2), # ppm * 1000
-    (:salinity, SILTSTONE) => (80, 50 ^ 2),
-    (:salinity, SHALE) => (25, 11 ^ 2),
+    (:salinity, SILTSTONE) => (80, 35 ^ 2),
+    (:salinity, SHALE) => (25, 10 ^ 2),
 )
 
 # Action costs
@@ -65,8 +65,8 @@ const SUITABILITY_THRESHOLD = 3.5
 const SUITABILITY_CONF_THRESHOLD = 0.8
 const SUITABILITY_BIAS = 0.7
 const SUITABILITY_NSAMPLES = 24 # Good to have a multiple of number of rock types
-const λ_1 = 5
-const λ_2 = 1e-4
+λ_1 = 10 # information_gain
+λ_2 = 5e-4 # suitability
 
 # Action Uncertainty
 # Get references for these
@@ -86,9 +86,9 @@ a_u = Dict(
     (:well_action, :injectivity) => 0.05 ^ 2, # within .05 MtCO2/year
     (:well_action, :salinity) => 0.01 ^ 2, # within 1% ppm 
 
-    (:seismic_action, :z) => 100, # within 10 m
-    (:seismic_action, :topSealThickness) => 400, # within 20 m
-    (:seismic_action, :bottomSeal) => 0.15 ^ 2, # within 0.1
+    (:seismic_action, :z) => 64, # within 8 m
+    (:seismic_action, :topSealThickness) => 225, # within 15 m
+    (:seismic_action, :bottomSeal) => 0.1 ^ 2, # within 0.1
 )
 
 ACTION_UNCERTAINTY = DefaultDict(-1., a_u)
