@@ -87,7 +87,7 @@ a_u = Dict(
     (:well_action, :salinity) => 0.01 ^ 2, # within 1% ppm 
 
     (:seismic_action, :z) => 64, # within 8 m
-    (:seismic_action, :topSealThickness) => 225, # within 15 m
+    (:seismic_action, :topSealThickness) => 100, # within 10 m
     (:seismic_action, :bottomSeal) => 0.1 ^ 2, # within 0.1
 )
 
