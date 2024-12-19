@@ -26,7 +26,7 @@ function run_solver(dirname, max_depth = 22, tree_queries=4, tree_in_info=true)
                             alpha_action=0.3,);
 
     planner = POMDPs.solve(solver, pomdp);
-    hr = HistoryRecorder(max_steps=20, show_progress=true);
+    hr = HistoryRecorder(max_steps=22, show_progress=true);
     hist = simulate(hr, pomdp, planner)
     @save "$dirname/planner.jld2" planner;
     return hist;
