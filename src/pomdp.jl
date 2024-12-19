@@ -43,7 +43,6 @@ mutable struct CCSState
     rocktype_belief::Vector{Distributions.Categorical{Float64, Vector{Float64}}}
     isterminated::Bool
     num_points::Int
-    obs_pdf # Observation for that state and its pdf
 end
 
 struct ScaledEuclidean <: Distances.PreMetric
@@ -111,8 +110,7 @@ struct CCSPOMDP <: POMDP{CCSState, @NamedTuple{id::Symbol, geometry::Geometry}, 
                             gps, 
                             rtype_belief, 
                             false, 
-                            0, 
-                            nothing), 
+                            0), 
                     Dict(), # Will get filled the first time actionindex is called
                     earth,
                     lines,
@@ -165,8 +163,6 @@ function update_sp_wobs(pomdp::CCSPOMDP, prevstate, action, state)
             push!(components, obs)
         end
     end
-    # println("Returning $components")
-    state.obs_pdf = components
     return components
 end
 
@@ -437,3 +433,8 @@ end
 
 
 POMDPs.discount(pomdp::CCSPOMDP) = 0.99
+
+# Potential TODOs for more exploration:
+# Set estimate_value to positive value
+# Lower action costs
+# Bottom Seal gains more information or starts with more uncertainty

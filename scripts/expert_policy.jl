@@ -91,10 +91,10 @@ function POMDPs.action(p::CGSRandomPolicy, b)
     return chosen_action
 end
 
-function runsims(nsims::Int = 40)
-    avg_reward = 0.0
+function runsims(nsims::Int)
+    rewards = [0 for _ in 1:nsims]
 
-    @showprogress for _ in 1:nsims
+    @showprogress for i in 1:nsims
         pomdp = CCSPOMDPs.CCSPOMDP();
 
         expert_pol = CGSExpertPolicy(pomdp);
@@ -102,17 +102,16 @@ function runsims(nsims::Int = 40)
         rollout_sim = RolloutSimulator(max_steps=20);
         expert_reward = simulate(rollout_sim, pomdp, expert_pol, NothingUpdater())
 
-        avg_reward += expert_reward
+        rewards[i] = expert_reward
     end
 
-    avg_reward /= nsims
-    println("Expert Policy Average Reward: $avg_reward")
+    println("Expert Policy Average Reward: $(mean(rewards)), Std Dev: $(std(rewards))")
 end
 
-function runrand(nsims::Int = 40)
-    avg_reward = 0.0
+function runrand(nsims::Int)
+    rewards = [0 for _ in 1:nsims]
 
-    @showprogress for _ in 1:nsims
+    @showprogress for i in 1:nsims
         pomdp = CCSPOMDPs.CCSPOMDP();
 
         rand_policy = CGSRandomPolicy(pomdp);
@@ -120,13 +119,12 @@ function runrand(nsims::Int = 40)
         rollout_sim = RolloutSimulator(max_steps=20);
         reward = simulate(rollout_sim, pomdp, rand_policy, NothingUpdater())
 
-        avg_reward += reward
+        rewards[i] = reward
     end
 
-    avg_reward /= nsims
-    println("Random Policy Average Reward: $avg_reward")
+    println("Random Policy Average Reward: $(mean(rewards)), Std Dev: $(std(rewards))")
 end
 
-
-runsims()
-runrand()
+nsims = 100
+runsims(nsims)
+runrand(nsims)

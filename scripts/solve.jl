@@ -11,7 +11,7 @@ function get_date_dirname()
     timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
     dirname = "pomcpow_outputs/results_$timestamp"
 end
-function run_solver(max_depth = 22, tree_queries=500, tree_in_info=true)
+function run_solver(dirname, max_depth = 22, tree_queries=4, tree_in_info=true)
     println("Max Depth: $max_depth, Tree Queries: $tree_queries")
     pomdp = CCSPOMDPs.CCSPOMDP();
     solver = POMCPOWSolver(tree_queries=tree_queries,
@@ -26,9 +26,9 @@ function run_solver(max_depth = 22, tree_queries=500, tree_in_info=true)
                             alpha_action=0.3,);
 
     planner = POMDPs.solve(solver, pomdp);
-
-    hr = HistoryRecorder();
+    hr = HistoryRecorder(max_steps=20, show_progress=true);
     hist = simulate(hr, pomdp, planner)
+    @save "$dirname/planner.jld2" planner;
     return hist;
 end
 
@@ -54,7 +54,7 @@ mkdir(dirname)
 
 open("$dirname/reward.txt", "w") do io
     redirect_stdout(io) do
-        @time hist = run_solver()
+        @time hist = run_solver(dirname)
         write_results(hist, dirname);
     end
 end

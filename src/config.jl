@@ -20,6 +20,11 @@ const FEATURE_NAMES = [
 
 # Belief Initialization
 PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
+    # The topseal is independent of rock type (Any rock type can have any type of seal above it)
+    (:topSealThickness, SANDSTONE) => (45, 15 * 15), # meters
+    (:topSealThickness, SILTSTONE) => (45, 15 * 15), # meters
+    (:topSealThickness, SHALE) => (45, 15 * 15), # meters
+
     # For permeability, log transform: Actual Sandstone range is 10 - 200,
     # ln range is 2.3 - 5.3, mean is 3.8, std is 1.5
     # according to https://www.saltworkconsultants.com/carbonate-porosity-sandstone-vs-carbonate/
@@ -30,11 +35,6 @@ PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
     # Shale: 0.001 mD to 1 mD, log range is -6.9 to 0, mean is -3.45, std is 1.5
     # https://www.sciencedirect.com/science/article/pii/S0016236114009429#:~:text=%E2%80%A2,10%E2%88%927%20and%201.2%20mD.
     (:permeability, SHALE) => (-3.45, 1.5 * 1.5), # log(miniDarcy)
-
-    # The topseal is independent of rock type (Any rock type can have any type of seal above it)
-    (:topSealThickness, SANDSTONE) => (45, 15 * 15), # meters
-    (:topSealThickness, SILTSTONE) => (45, 15 * 15), # meters
-    (:topSealThickness, SHALE) => (45, 15 * 15), # meters
 
     # These aren't actually used in GP initialization, but kept for consistency in the reward fn
     (:z, SANDSTONE) => (500, 150 * 150), # meters
@@ -50,7 +50,6 @@ PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
     (:injectivity, SILTSTONE) => (0, 0.1),
     (:injectivity, SHALE) => (0, 0.1),
 
-    # again independent of rock type
     (:salinity, SANDSTONE) => (60, 20 ^ 2), # ppm * 1000
     (:salinity, SILTSTONE) => (80, 35 ^ 2),
     (:salinity, SHALE) => (25, 10 ^ 2),
