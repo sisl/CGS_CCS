@@ -38,10 +38,10 @@ end
 
 function POMDPs.action(p::CGSExpertPolicy, b)
     all_actions = actions(p.pomdp)
-    if rand(1:2) == 1
-        action_choice = :well_action
-    else
+    if rand(1:3) == 1
         action_choice = :seismic_action
+    else
+        action_choice = :well_action
     end
     probs = [0. for _ in all_actions]
     for (i, action) in enumerate(all_actions)
@@ -60,6 +60,28 @@ function POMDPs.action(p::CGSExpertPolicy, b)
             cell.probability *= 0.9
         end
     end
+    p.budget += CCSPOMDPs.reward_action_cost(chosen_action)
+
+    if p.budget <= 0
+        return actions(p.pomdp)[end] # terminate action
+    end
+
+    return chosen_action
+end
+
+mutable struct CGSRandomPolicy{P<:POMDP} <: Policy
+    pomdp::P
+    budget::Float64
+    function CGSRandomPolicy(pomdp::P) where {P<:POMDP}
+        budget = START_BUDGET
+        return new{P}(pomdp, budget)
+    end 
+end
+
+
+function POMDPs.action(p::CGSRandomPolicy, b)
+    all_actions = actions(p.pomdp)
+    chosen_action = rand(all_actions)
     p.budget += CCSPOMDPs.reward_action_cost(chosen_action)
 
     if p.budget <= 0
@@ -93,7 +115,7 @@ function runrand(nsims::Int = 40)
     @showprogress for _ in 1:nsims
         pomdp = CCSPOMDPs.CCSPOMDP();
 
-        rand_policy = RandomPolicy(pomdp);
+        rand_policy = CGSRandomPolicy(pomdp);
 
         rollout_sim = RolloutSimulator(max_steps=20);
         reward = simulate(rollout_sim, pomdp, rand_policy, NothingUpdater())

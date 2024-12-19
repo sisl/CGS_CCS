@@ -11,7 +11,7 @@ function get_date_dirname()
     timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
     dirname = "pomcpow_outputs/results_$timestamp"
 end
-function run_solver(max_depth = 22, tree_queries=100, tree_in_info=true)
+function run_solver(max_depth = 22, tree_queries=500, tree_in_info=true)
     println("Max Depth: $max_depth, Tree Queries: $tree_queries")
     pomdp = CCSPOMDPs.CCSPOMDP();
     solver = POMCPOWSolver(tree_queries=tree_queries,
@@ -20,7 +20,9 @@ function run_solver(max_depth = 22, tree_queries=100, tree_in_info=true)
                             estimate_value=0.0,
                             enable_action_pw=false,
                             check_repeat_obs=false,
+                            k_observation=5.0,
                             alpha_observation=0.3,
+                            k_action=5.0,
                             alpha_action=0.3,);
 
     planner = POMDPs.solve(solver, pomdp);

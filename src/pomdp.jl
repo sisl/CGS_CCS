@@ -321,7 +321,7 @@ function score_component(feature::Symbol, value)
             return 1
         end
     elseif feature == :bottomSeal
-        if value < 0.1
+        if (1 / 1 + exp(-value)) < 0.55
             return 1
         else
             return 5
@@ -352,6 +352,7 @@ function reward_information_suitability(state::CCSState)
     total_grid_suitability = 0. # This method stratifies suitability sampling on rock type.
     sample_values = zeros(npts * SUITABILITY_NSAMPLES)
     prob_mask = zeros(SUITABILITY_NSAMPLES)
+    scaling_factor = Dict(feat => mean([PRIOR_BELIEF[(feat, rtype)][2] for rtype in instances(RockType)]) for feat in FEATURE_NAMES)
 
     for layer in 1:NUM_LAYERS
         # suitability
@@ -362,11 +363,9 @@ function reward_information_suitability(state::CCSState)
             # information_gain
             fill!(scaled_var_mtx, 0.0)
             fill!(all_rock_mean, 0.0)
-            scaling_factor = 0.0
 
             for rocktype in 1:length(instances(RockType))
                 belief_prob = state.rocktype_belief[layer].p[rocktype]
-                scaling_factor += (1/3) * PRIOR_BELIEF[(column, RockType(rocktype))][2]
                 if belief_prob == 0.0
                     continue
                 end
@@ -390,7 +389,7 @@ function reward_information_suitability(state::CCSState)
 
                 # information gain
                 var_compontent = ((mg_stds .^ 2) .+ (mg_means) .^ 2 .- all_rock_mean) .* belief_prob
-                scaled_var_mtx .+= reshape(var_compontent, GRID_SIZE, GRID_SIZE)'
+                scaled_var_mtx .+= reshape(var_compontent, GRID_SIZE, GRID_SIZE)' 
 
                 # suitability
                 rocktype_nsamples = Int(floor(belief_prob * SUITABILITY_NSAMPLES))
@@ -401,7 +400,7 @@ function reward_information_suitability(state::CCSState)
                 prev_end += rocktype_nsamples
             end
             # println("w/o scaling, For column $column, with scaling factor: $(sqrt(scaling_factor)), mean uncertainty after scaling: $(mean(sqrt.(scaled_var_mtx ./ scaling_factor)))")
-            layer_col_unc += mean(sqrt.(scaled_var_mtx ./ scaling_factor))
+            layer_col_unc += mean(sqrt.(scaled_var_mtx ./ scaling_factor[column]))
         end
         # suitability
         sample_values ./= length(FEATURE_NAMES)
@@ -432,7 +431,7 @@ function POMDPs.reward(pomdp::CCSPOMDP, state, action, state_prime)
     end
     new_uncertainty, suitability = reward_information_suitability(state_prime)
 
-    println("Action: $(action.id), \nzzzAction Cost: $action_cost, \nOrig_uncertainty: $(λ_1*(orig_uncertainty))\nNew_uncertainty: $(λ_1*(new_uncertainty))\nzzzUncertainty Change: $(λ_1*(orig_uncertainty - new_uncertainty)), \nzzzSuitability: $(λ_2*suitability)")
+    # println("Action: $(action.id), \nzzzAction Cost: $action_cost, \nOrig_uncertainty: $(λ_1*(orig_uncertainty))\nNew_uncertainty: $(λ_1*(new_uncertainty))\nzzzUncertainty Change: $(λ_1*(orig_uncertainty - new_uncertainty)), \nzzzSuitability: $(λ_2*suitability)")
     return action_cost + λ_1 * (orig_uncertainty - new_uncertainty) + λ_2 * suitability
 end
 

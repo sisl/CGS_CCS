@@ -57,14 +57,14 @@ PRIOR_BELIEF = Dict( # outputs shift, scale (variance)
 )
 
 # Action costs
-const WELL_COST = 6
-const SEISMIC_LINE_COST = 20
+const WELL_COST = 26
+const SEISMIC_LINE_COST = 120
 
 # Reward Constants
 const SUITABILITY_THRESHOLD = 3.5
 const SUITABILITY_CONF_THRESHOLD = 0.8
 const SUITABILITY_BIAS = 0.7
-const SUITABILITY_NSAMPLES = 24 # Good to have a multiple of number of rock types
+const SUITABILITY_NSAMPLES = 21 # Good to have a multiple of number of rock types
 λ_1 = 500 # information_gain
 λ_2 = 1e-3 # suitability
 
