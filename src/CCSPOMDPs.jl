@@ -8,7 +8,7 @@ using DataFrames
 using Revise
 using Meshes
 using GeoTables
-import GLMakie as Mke
+import CairoMakie as Mke
 using Infiltrator
 using AbstractGPs
 using Unitful

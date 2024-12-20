@@ -11,7 +11,7 @@ function get_date_dirname()
     timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
     dirname = "pomcpow_outputs/results_$timestamp"
 end
-function run_solver(dirname, max_depth = 22, tree_queries=4, tree_in_info=true)
+function run_solver(dirname, max_depth = 22, tree_queries=50, tree_in_info=true)
     println("Max Depth: $max_depth, Tree Queries: $tree_queries")
     pomdp = CCSPOMDPs.CCSPOMDP();
     solver = POMCPOWSolver(tree_queries=tree_queries,
@@ -37,7 +37,7 @@ function write_results(hist, dirname)
     cumulative_discounted_reward = discounted_reward(hist)
 
     for step in hist
-        println("Action: $(step.a.id), Reward: $(step.r)")
+        println("Action: $(step.a), Reward: $(step.r)")
     end
     println()
     println("Cumulative Discounted Reward: $cumulative_discounted_reward")

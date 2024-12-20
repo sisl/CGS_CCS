@@ -6,9 +6,10 @@ using POMDPModelTools
 using POMDPSimulators
 using Meshes
 using BeliefUpdaters
+using Statistics
 using ProgressMeter
 
-START_BUDGET = 150.0 # Basically whatever the POMDP spends
+START_BUDGET = 150.0 * 6 # Basically whatever the POMDP spends
 
 mutable struct GridCell
     region::Box
@@ -92,7 +93,7 @@ function POMDPs.action(p::CGSRandomPolicy, b)
 end
 
 function runsims(nsims::Int)
-    rewards = [0 for _ in 1:nsims]
+    rewards = [0.0 for _ in 1:nsims]
 
     @showprogress for i in 1:nsims
         pomdp = CCSPOMDPs.CCSPOMDP();
@@ -109,7 +110,7 @@ function runsims(nsims::Int)
 end
 
 function runrand(nsims::Int)
-    rewards = [0 for _ in 1:nsims]
+    rewards = [0.0 for _ in 1:nsims]
 
     @showprogress for i in 1:nsims
         pomdp = CCSPOMDPs.CCSPOMDP();
