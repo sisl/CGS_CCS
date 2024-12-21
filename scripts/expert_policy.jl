@@ -39,7 +39,7 @@ end
 
 function POMDPs.action(p::CGSExpertPolicy, b)
     all_actions = actions(p.pomdp)
-    if rand(1:3) == 1
+    if rand(1:2) == 1
         action_choice = :seismic_action
     else
         action_choice = :well_action
