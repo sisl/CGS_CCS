@@ -7,13 +7,14 @@ using Dates
 using D3Trees
 using JLD2
 
+pomdp = CCSPOMDPs.CCSPOMDP();
 function get_date_dirname()
     timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
     dirname = "pomcpow_outputs/results_$timestamp"
 end
-function run_solver(dirname, max_depth = 22, tree_queries=50, tree_in_info=true)
+
+function run_solver(dirname, max_depth = 22, tree_queries=40, tree_in_info=true)
     println("Max Depth: $max_depth, Tree Queries: $tree_queries")
-    pomdp = CCSPOMDPs.CCSPOMDP();
     solver = POMCPOWSolver(tree_queries=tree_queries,
                             max_depth=max_depth,
                             tree_in_info=tree_in_info,
@@ -28,7 +29,6 @@ function run_solver(dirname, max_depth = 22, tree_queries=50, tree_in_info=true)
     planner = POMDPs.solve(solver, pomdp);
     hr = HistoryRecorder(max_steps=22, show_progress=true);
     hist = simulate(hr, pomdp, planner)
-    @save "$dirname/planner.jld2" planner;
     return hist;
 end
 
@@ -56,5 +56,6 @@ open("$dirname/reward.txt", "w") do io
     redirect_stdout(io) do
         @time hist = run_solver(dirname)
         write_results(hist, dirname);
+        # include("expert_policy.jl")
     end
 end

@@ -66,31 +66,10 @@ function POMDPs.action(p::CGSExpertPolicy, b)
     if p.budget <= 0
         return actions(p.pomdp)[end] # terminate action
     end
-
+    println("Chosen Action: $chosen_action")
     return chosen_action
 end
 
-mutable struct CGSRandomPolicy{P<:POMDP} <: Policy
-    pomdp::P
-    budget::Float64
-    function CGSRandomPolicy(pomdp::P) where {P<:POMDP}
-        budget = START_BUDGET
-        return new{P}(pomdp, budget)
-    end 
-end
-
-
-function POMDPs.action(p::CGSRandomPolicy, b)
-    all_actions = actions(p.pomdp)
-    chosen_action = rand(all_actions)
-    p.budget += CCSPOMDPs.reward_action_cost(chosen_action)
-
-    if p.budget <= 0
-        return actions(p.pomdp)[end] # terminate action
-    end
-
-    return chosen_action
-end
 
 function runsims(nsims::Int)
     rewards = [0.0 for _ in 1:nsims]
@@ -109,23 +88,5 @@ function runsims(nsims::Int)
     println("Expert Policy Average Reward: $(mean(rewards)), Std Dev: $(std(rewards))")
 end
 
-function runrand(nsims::Int)
-    rewards = [0.0 for _ in 1:nsims]
-
-    @showprogress for i in 1:nsims
-        pomdp = CCSPOMDPs.CCSPOMDP();
-
-        rand_policy = CGSRandomPolicy(pomdp);
-
-        rollout_sim = RolloutSimulator(max_steps=20);
-        reward = simulate(rollout_sim, pomdp, rand_policy, NothingUpdater())
-
-        rewards[i] = reward
-    end
-
-    println("Random Policy Average Reward: $(mean(rewards)), Std Dev: $(std(rewards))")
-end
-
-nsims = 100
+nsims = 1
 runsims(nsims)
-runrand(nsims)
