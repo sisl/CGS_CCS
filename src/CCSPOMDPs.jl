@@ -3,14 +3,22 @@ module CCSPOMDPs
 using Reexport
 using Distributions
 using Statistics
-using GeoStats
 using Random
 using DataFrames
-import GLMakie as Mke
+using Revise
+using Meshes
+using GeoTables
+import CairoMakie as Mke
 using Infiltrator
 using AbstractGPs
 using Unitful
+using Distances
+using ProgressMeter
+using JLD2
+using ParticleFilters
+using POMDPModelTools
 using Plots
+using LinearAlgebra
 using DataStructures
 @reexport using POMDPs
 
@@ -19,8 +27,11 @@ include("config.jl")
 export
     GeoFeatures,
     LayerFeatures,
-    CCS_State,
+    CCSState,
     CCSPOMDP,
+    reward_action_cost,
+    SPACING,
+    GRID_SIZE,
     visualize_gt,
     visualize_uncertainty
 
